@@ -1,3 +1,21 @@
+# to save an external text in a blend file
+def save_text_in_blend_file(path, file_name='my_text.py'):
+    """Run this then save the blend file.
+    file_name is the key blender uses to store the file:
+    bpy.data.texts[file_name]"""
+    t = bpy.data.texts.new(file_name)
+    read = open(path).read()
+    t.write(read)
+
+
+# to import the text as a module from within the blend file
+def get_internal_text_as_module(filename, key):
+    """Load a module and return a dictionary from
+    that module."""
+    module = bpy.data.texts[filename].as_module()
+    return module.points[key]
+
+
 def get_co(ob):
     """Returns Nx3 numpy array of vertex coords as float32"""
     v_count = len(ob.data.vertices)
@@ -52,3 +70,48 @@ def apply_shape(ob, modifier_name='Cloth', update_existing_key=False, keep=['Clo
         j.show_viewport = i
     
     return key
+
+
+# get depsgraph co with various modifiers turned off
+def get_co_with_modifiers(ob, types=[], names=[], include_mesh=False):
+    """Get the coordinates of modifiers with
+    specific modifiers turned on or off.
+    List mods by type or name.
+    This lets you turn off all mods of a type
+    or just turn off by name."""
+    
+    debug = True
+    if debug:
+        # verify modifier names and types
+        mod_types = [mod.type for mod in ob.modifiers]
+        mod_names = [mod.name for mod in ob.modifiers]
+        # if the arg names ar not right return
+        type_check = np.all(np.in1d(types, mod_types))
+        name_check = np.all(np.in1d(names, mod_names))
+        
+        if not (type_check & name_check):
+            print("!!! Warning. Mods not listed correctly !!!")
+            print("!!! Warning. Mods not listed correctly !!!")
+            return
+    
+    # save mod states for reset    
+    mod_states = [mod.show_viewport for mod in ob.modifiers]
+
+    def turn_off_modifier(modifier):
+        modifier.show_viewport = False
+    
+    [turn_off_modifier(mod) for mod in ob.modifiers if mod.name in names]
+    [turn_off_modifier(mod) for mod in ob.modifiers if mod.type in types]
+            
+    # get the coordinates with the current modifier state    
+    dg = bpy.context.evaluated_depsgraph_get()
+    proxy = ob.evaluated_get(dg)
+    co = get_co(proxy)    
+        
+    for i, j in zip(mod_states, ob.modifiers):
+        j.show_viewport = i    
+    
+    if include_mesh:
+        return co, proxy.data
+    
+    return co
