@@ -1,10 +1,12 @@
-def save_data_in_blend_file(name='saved_data.py', var='some_variable', data={'key': [1,2,3]}, overwrite=True):
-    """Save dictionaries to a text file in the blend file"""
+def save_data(name='saved_data.py', var='some_variable', data={'key': [1,2,3]}, overwrite=True):
+    """Saves a dictionary as a variable in a python file
+    as a blender internal text file. Can later import
+    module and call all data as global variables."""
     if name not in bpy.data.texts:
         bpy.data.texts.new(name)
 
     data_text = bpy.data.texts[name]
-    
+
     m = json.dumps(data, sort_keys=True, indent=2)
 
     if overwrite:
