@@ -570,21 +570,21 @@ def spring_force(cloth):
     if dynamic:
         # springs (vec, dot, length) # could put: if dynamic
         v, d, l = stretch_springs(cloth, cloth.target) # from target or source key
-
-
+        print('this is d.shape', d)
+    
     # for pinning
     np.copyto(cloth.vel_start, cloth.co)
 
     # add gravity before measuring stretch
-    grav = np.array([0,0,-0.01])
-    cloth.co += grav
+    gravity = cloth.ob.MC_props.gravity
+    cloth.co[:,2] += gravity
 
     iters = 2
     for i in range(iters):
     # apply pin force
         pin_vecs = (cloth.pin_arr - cloth.co) * cloth.pin
         cloth.co += pin_vecs
-
+        #np.copyto(cloth.pin_arr, cloth.co)
 
         # (current vec, dot, length)
         cv, cd, cl = measure_edges(cloth.co, cloth.springs) # from current cloth state
@@ -651,9 +651,19 @@ def spring_force(cloth):
 
                 # need to check if copyto is faster than:
                 #cloth.co[cloth.selected] = cloth.pin_arr[cloth.selected]
-
+                #print(cloth.selected)
+                translate_vecs = cloth.pin_arr[cloth.selected] - cloth.co[cloth.selected]
+                np.copyto(cloth.co, cloth.pin_arr, where=cloth.selected[:,nax])
+                #np.copyto(cloth.pin_arr, cloth.co, where=cloth.selected[:,nax])
+                #cloth.pin_arr[cloth.selected] += translate_vecs
+                
+                
                 np.copyto(cloth.co, cloth.vel_start, where=cloth.selected[:,nax])
-                np.copyto(cloth.pin_arr, cloth.vel_start, where=cloth.selected[:,nax])
+                
+                
+                cloth.pin_arr[cloth.selected] = (cloth.co[cloth.selected] + translate_vecs)
+                #np.copyto(cloth.vel_start, cloth.co, where=cloth.selected[:,nax])
+
 
         #spring_move = cloth.co - cloth.vel_start
         #cloth.co += spring_move * .5
@@ -673,7 +683,7 @@ def cloth_physics(ob, cloth, collider):
     #   or adapt the cloth object to match so I can sync a patter change
     #   given you can change both now I have to also include logic to
     #   decide who is boss if both are changed in different ways.
-    grav = np.array([0,0,-0.1])
+    #grav = np.array([0,0,-0.1])
     if cloth.target is not None:
 
         # if target is deleted while still referenced by pointer property
@@ -1235,9 +1245,11 @@ class McPropsObject(bpy.types.PropertyGroup):
     target:\
     bpy.props.PointerProperty(type=bpy.types.Object, description="Use this object as the target for stretch and bend springs", update=cb_target)
 
-
     stretch:\
-    bpy.props.FloatProperty(name="Stretch", description="Strength of the stretch springs", default=.2, min=0, max=1, soft_min= -2, soft_max=2)
+    bpy.props.FloatProperty(name="Stretch", description="Strength of the stretch springs", default=.2, min=0, max=1, soft_min= -2, soft_max=2, precision=3)
+
+    gravity:\
+    bpy.props.FloatProperty(name="Gravity", description="Strength of the gravity", default=0.0, min=-1000, max=1000, soft_min= -10, soft_max=10, precision=3)
 
 
 
@@ -1286,6 +1298,37 @@ class MCResetToBasisShape(bpy.types.Operator):
         bco = get_co_shape(ob, "Basis")
         cloth = MC_data['cloths'][ob['MC_cloth_id']]
         cloth.co = bco
+        cloth.pin_arr = np.copy(bco)
+        cloth.vel_start = np.copy(bco)
+        ob.data.shape_keys.key_blocks['MC_current'].data.foreach_set('co', bco.ravel())
+
+        bpy.ops.object.mode_set(mode=mode)
+        ob.data.update()
+        return {'FINISHED'}
+
+
+class MCResetSelectedToBasisShape(bpy.types.Operator):
+    """Reset the selected verts to basis shape"""
+    bl_idname = "object.mc_reset_selected_to_basis_shape"
+    bl_label = "MC Reset Selected To Basis Shape"
+    bl_options = {'REGISTER', 'UNDO'}
+    def execute(self, context):
+        ob = MC_data['recent_object']
+        if ob is None:
+            ob = bpy.context.object
+
+        mode = ob.mode
+        if ob.data.is_editmode:
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+        reset_shapes(ob)
+        bco = get_co_shape(ob, "Basis")
+        cloth = MC_data['cloths'][ob['MC_cloth_id']]
+        cloth.co[cloth.selected] = bco[cloth.selected]
+        cloth.pin_arr[cloth.selected] = bco[cloth.selected]
+        cloth.vel_start[cloth.selected] = bco[cloth.selected]
+        
+        bco[~cloth.selected] = cloth.co[~cloth.selected]
         ob.data.shape_keys.key_blocks['MC_current'].data.foreach_set('co', bco.ravel())
 
         bpy.ops.object.mode_set(mode=mode)
@@ -1320,10 +1363,10 @@ class MCApplyForExport(bpy.types.Operator):
 # ============================================================ #
 #                         draw code                            #
 #                                                              #
-class PANEL_PT_modelingCloth(bpy.types.Panel):
-    """Modeling Cloth Panel"""
-    bl_label = "Modeling Cloth Panel 2"
-    bl_idname = "PANEL_PT_modelingCloth_2"
+class PANEL_PT_modelingClothMain(bpy.types.Panel):
+    """Modeling Cloth Main"""
+    bl_label = "MC Main"
+    bl_idname = "PANEL_PT_modeling_cloth_main"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Extended Tools"
@@ -1375,15 +1418,43 @@ class PANEL_PT_modelingCloth(bpy.types.Panel):
                     #row = col.row()
                     box.scale_y = 2
                     box.operator('object.mc_reset_to_basis_shape', text="RESET", icon='RECOVER_LAST')
+                    box.operator('object.mc_reset_selected_to_basis_shape', text="RESET SELECTED", icon='RECOVER_LAST')
                     col = layout.column(align=True)
                     col.use_property_decorate = True
                     col.label(text='Target Object')
                     col.prop(ob.MC_props, "target", text="", icon='DUPLICATE')
 
-                    col.label(text='Forces')
-                    col.prop(ob.MC_props, "stretch", text="stretch", icon='PLAY')
 
+class PANEL_PT_modelingClothSettings(bpy.types.Panel):
+    """Modeling Cloth Settings"""
+    bl_label = "MC Settings"
+    bl_idname = "PANEL_PT_modeling_cloth_settings"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Extended Tools"
 
+    def draw(self, context):
+        sc = bpy.context.scene
+        layout = self.layout
+
+        # use current mesh or most recent cloth object if current ob isn't mesh
+        ob = bpy.context.object
+        if ob is not None:
+            mesh = ob.type == "MESH"
+            recent = MC_data['recent_object']
+            if recent is not None:
+                if not mesh:
+                    ob = recent
+                    mesh = True
+                else:
+                    MC_data['recent_object'] = ob
+
+            cloth = ob.MC_props.cloth
+            if cloth:
+                col = layout.column(align=True)
+                col.label(text='Forces')
+                col.prop(ob.MC_props, "stretch", text="stretch")
+                col.prop(ob.MC_props, "gravity", text="gravity")
 
 # ^                                                          ^ #
 # ^                     END draw code                        ^ #
@@ -1454,8 +1525,10 @@ def duplication_and_load():
 classes = (
     McPropsObject,
     McPropsScene,
-    PANEL_PT_modelingCloth,
+    PANEL_PT_modelingClothMain,
+    PANEL_PT_modelingClothSettings,
     MCResetToBasisShape,
+    MCResetSelectedToBasisShape,
 )
 
 
