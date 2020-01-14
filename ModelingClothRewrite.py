@@ -1,5 +1,5 @@
 
-
+# !!! might be able to use ob.update_from_editmode() instead of all the crap with the bmesh module !!!
 
 """ New Features: """
 # pause button using space bar or something with modal grab
