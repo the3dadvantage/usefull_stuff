@@ -1,3 +1,13 @@
+def verts_in_group(ob, name='Group'):
+    """Returns np array of indices for vertices in the group"""
+    ob.update_from_editmode() # in case someone has assigned verts in editmode
+    idx = ob.vertex_groups[name].index
+    idxer = np.arange(len(ob.data.vertices))
+    this = [[j.group for j in v.groups if j.group == idx] for v in ob.data.vertices]
+    idxs = [i for i in idxer if len(this[i]) > 0]
+    return np.array(idxs)
+
+
 def save_data(name='saved_data.py', var='some_variable', data={'key': [1,2,3]}, overwrite=True):
     """Saves a dictionary as a variable in a python file
     as a blender internal text file. Can later import
