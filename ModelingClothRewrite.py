@@ -1,5 +1,6 @@
 
 # !!! might be able to use ob.update_from_editmode() instead of all the crap with the bmesh module !!!
+# update_from_editmode() will also detect changes in vertex groups without having to pop in and out.
 
 """ New Features: """
 # pause button using space bar or something with modal grab
