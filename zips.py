@@ -374,12 +374,12 @@ def modifier_setup(ob, curve, bottom, top, name='zips_curve'):
     cur.object = curve
 
 
-def path_setup(name):
+def path_setup(name, path=None):
     """Run in execute function to setup each path"""
     ob = bpy.context.object
     proxy = get_co_with_modifiers(ob, proxy_only=True)
-    path = get_order_of_selection(bpy.context.object)
-    #path = set_path(idx=None)
+    if path is None:    
+        path = get_order_of_selection(bpy.context.object)
 
     if path is None:    
         msg = "Select a continuous path of verts with a start and end."
@@ -388,9 +388,10 @@ def path_setup(name):
 
     co = get_sub_co(proxy, path)
     flip = auto_flip(co)
+    #flip = True
     if flip:
-        path = path[::-1]
-        co = co[::-1]
+        path[:] = path[::-1]
+        co[:] = co[::-1]
 
     pco = co_to_pco(co)
 
@@ -470,7 +471,49 @@ class ZipsApplySettingsFromFile(bpy.types.Operator):
         return {'FINISHED'}
 
 
-def object_callback_setup(zob, order, var):
+def armature_setup(zob, ar, curve):
+    G = bpy.context.object
+    # add the curve constraint to the bone
+    if 'zips_path' not in ar.constraints:
+        con = ar.constraints.new('FOLLOW_PATH')
+        con.name = 'zips_path'    
+        
+    con = ar.constraints['zips_path']
+    con.use_curve_follow = True
+    con.forward_axis = 'FORWARD_X'
+    con.use_fixed_location = True
+    
+    bpy.context.view_layer.objects.active = ar
+    #ar.select_set(True)
+    override = {'constraint':ar.constraints['zips_path']}
+    bpy.ops.constraint.followpath_path_animate(override, constraint='zips_path')
+    dg = bpy.context.evaluated_depsgraph_get()
+    dg.update
+    bpy.context.view_layer.objects.active = G
+    # have to animate path
+    con.target = curve # !!! if you do this 
+    #   it breaks the other objects on the path
+    
+    length = total_curve_length(curve)
+    bottom_offset = ar.pose.bones['offset'].head.x
+    co = get_co(zob)
+    top_offset = np.max(co[::3]) - ar.pose.bones['base'].head.x
+    
+    di = {'total_length': str(length),
+    'bottom_offset': str(bottom_offset),
+    'top_offset': str(top_offset)}
+    ob=bpy.context.object
+    save_data(name=ob.name + '_zips_data.py', var='offset_data', data=di)    
+
+    # calculate offset
+    prop_offset = ob.zips_props.zipper_pull_offset    
+    con_length = 1 - ((bottom_offset/length) + (top_offset/length))
+    prop_offset + (bottom_offset/length)
+    con.offset_factor = (prop_offset * con_length) + (bottom_offset/length)           
+
+
+def object_callback_setup(zob, order, var, ar=False):
+    # for some reason this is running twice when an object property is None
     gob = bpy.context.object    
     # get text module
     name = gob.name + '_zips_data.py'
@@ -489,8 +532,21 @@ def object_callback_setup(zob, order, var):
                 zob.modifiers.remove(zob.modifiers['zips_curve'])
             if 'zips_displace' in zob.modifiers:
                 zob.modifiers.remove(zob.modifiers['zips_displace'])
-            zob.parent = None        
+            if zob.parent is not None:    
+                if zob.parent.type == 'ARMATURE':
+                    ar = zob.parent
+                    try:
+                        cons = ar.constraints
+                        cons.remove(cons['zips_path'])
+                    except:
+                        print('tried to remove constraint. Already removed.')
+                if zob.parent.type != 'ARMATURE':
+                    zob.parent = None        
         return None, None
+
+    # save the object name so the prop can find it on remove
+    di = {'ob': zob.name}
+    save_data(name=name, var=var, data=di)
 
     curve = None
     
@@ -510,6 +566,11 @@ def object_callback_setup(zob, order, var):
         print('!! no suitable path !!')
         return None, None
     
+    if ar:
+        armature_setup(zob, ar, curve)
+        
+        return None, None
+    
     if 'zips_displace' in zob.modifiers:
         displace = zob.modifiers['zips_displace']    
     else:    
@@ -527,9 +588,6 @@ def object_callback_setup(zob, order, var):
     curve_mod.object = curve
     bpy.data.objects[zob.name].parent = bpy.data.objects[curve.name]
     
-    # save the object name so the prop can find it on remove
-    di = {'ob': zob.name}
-    save_data(name=name, var=var, data=di)
     return curve, displace
     
     
@@ -545,8 +603,22 @@ def cb_zipper_pull(self, context):
     order = ['middle_path', 'right_path', 'left_path']
     var = 'zipper_pull'
     
-    curve, displace = object_callback_setup(zob, order, var)
+    ar = False # switches to armature if we are using an armature
+    if zob is not None:
+        if zob.parent is not None:
+            if zob.parent.type == 'ARMATURE':
+                ar = zob.parent    
+                bones = [b.name for b in ar.pose.bones]
+                names = ['tab', 'base', 'offset']
+                if not np.all(np.in1d(names, bones)):
+                    # make sure we have all the bones
+                    ar = False
+
+    curve, displace = object_callback_setup(zob, order, var, ar)
+    if ar:
+        return
     
+    # if we're not using an armature
     # add displace for pull offset
     if curve is not None:
         # so the zipper pull won't stick past the end
@@ -644,7 +716,6 @@ def cb_left_tooth(self, context):
     
     # so the zipper teeth stop before the top object
     top = 0 
-    print(self.left_top, "the bears")
     if self.left_top is not None:
         lt = self.left_top
         ltco = np.zeros(len(lt.data.vertices) * 3, dtype=np.float32)
@@ -652,7 +723,7 @@ def cb_left_tooth(self, context):
         tx_min = np.min(ltco[::3])
         tx_max = np.max(ltco[::3])
         top = tx_max - tx_min        
-    print(top, "this is the top")
+
     arr_count = (length - (x_min + top)) // x_dist
     arr.count = arr_count
 
@@ -695,6 +766,7 @@ def cb_right_tooth(self, context):
 
 
 def auto_rotate(ob):
+    # !!! only runs if there is no armature !!!    
     """Rotate the tab so it hangs down.
     Will not rotate past zipper pull body"""
     zob = ob.zips_props.zipper_pull
@@ -714,7 +786,15 @@ def auto_rotate(ob):
     v_count = len(zob.data.vertices)
     zco = np.zeros(v_count * 3, dtype=np.float32)
     zob.data.vertices.foreach_get('co', zco)
+    
+    # get an edge that points close to x axis
+    ed = np.empty(len(zob.data.edges) * 2, dtype=np.int32)
+    zob.data.edges.foreach_get('vertices', ed)
+    vecs = zco[ed[1::2]] - zco[ed[::2]]
+
     low_vert = np.argmin(zco[::3])
+    high_vert = np.argmax(zco[::3])
+
     zco.shape = (v_count, 3)
     tab.rotation_euler.z = 0
     current = 0
@@ -722,28 +802,24 @@ def auto_rotate(ob):
     dco, dg = get_co_with_modifiers(zob)
     rots = [dco[low_vert][2]]
     angles = [0]
-    for i in range(17):
+    for i in range(18):
         current -= 10 * (np.pi/180)
         angles.append(current)
         tab.rotation_euler.z = current
         zob.data.update()
-        pco, bleh = get_co_with_modifiers(zob)
+        pco = get_co_with_modifiers(zob, dg=dg)
+        proxy = get_co_with_modifiers(zob, dg=dg, proxy_only=True)
         rots.append(pco[low_vert][2])
 
     low_angle = np.argmin(rots)
-    #return
-    
     tab.rotation_euler.z = angles[low_angle]
-    #print( * 10 * (10 * (np.pi/180)))        
+
     # prevent from rotating tab into zipper body
-    if tab.rotation_euler.z < -90:
-        tab.rotation_euler.z = -177
+    if tab.rotation_euler.z < np.pi:
+        tab.rotation_euler.z = np.pi
     if tab.rotation_euler.z > 0:
         tab.rotation_euler.z = 0
-    #print(rots)
 
-
-    
 
 # Settings:
 def cb_flip_lr(self, context):
@@ -771,7 +847,62 @@ def cb_zipper_pull_offset(self, context):
     if self.zipper_pull is None:
         return
     zob = self.zipper_pull
-    
+    ar = zob.parent
+    if ar is not None:
+        if ar.type == 'ARMATURE':    
+            ob=bpy.context.object
+            module = ob.name + '_zips_data.py'
+            data = bpy.data.texts[module].as_module().offset_data
+
+            bottom_offset = float(data['bottom_offset'])
+            top_offset = float(data['top_offset'])
+            length = float(data['total_length'])
+
+            # calculate offset
+            prop_offset = ob.zips_props.zipper_pull_offset    
+            con_length = 1 - ((bottom_offset/length) + (top_offset/length))
+            prop_offset + (bottom_offset/length)
+            
+            con = ar.constraints['zips_path']
+            con.offset_factor = (prop_offset * con_length) + (bottom_offset/length)           
+            dg = context.evaluated_depsgraph_get()
+
+            # auto rotate
+            tab = ar.pose.bones['tab']
+            tab.rotation_mode = 'XYZ'
+            tab.rotation_euler.z = 0
+            dg.update()
+            h_co = ar.matrix_world @ tab.head.xyz
+            t_co = ar.matrix_world @ tab.tail.xyz
+
+            down = np.array([0,0,-1], dtype=np.float32)            
+            # get base vec for sign so it doesn't rotate backwards when pointing up
+            base = ar.pose.bones['base']            
+            b_co = ar.matrix_world @ base.head.xyz
+            bt_co = ar.matrix_world @ base.tail.xyz
+            b_vec = np.array(bt_co - b_co)
+            stop = (b_vec @ down) <= 0.0
+
+            vec = np.array(t_co - h_co)
+            U_vec = vec / np.sqrt(vec @ vec)
+            dot = U_vec @ down
+            rot = np.arccos(dot)
+            if not stop:    
+                tab.rotation_euler.z = -rot
+
+            # prevent from rotating tab into zipper body
+            else:
+                offset_bone = ar.pose.bones['offset']            
+                ob_co = ar.matrix_world @ offset_bone.head.xyz
+                orient_vec = np.array(ob_co - b_co)
+                orient = orient_vec @ down
+                if orient > 0:
+                    tab.rotation_euler.z = np.pi
+                else:
+                    tab.rotation_euler.z = 0
+            return
+
+    # if there is no armature for the zipper!!!
     auto_rotate(bpy.context.object)
 
     # so the zipper pull won't stick past the end
@@ -815,7 +946,7 @@ def cb_left_side_offset(self, context):
 def cb_right_side_offset(self, context):
     """Offset the right side of the zipper
     left or right"""
-    print(dir(self), "Offset the right side left or right")
+    print("Offset the right side left or right")
 
 
 def cb_left_side_normal_offset(self, context):
@@ -836,7 +967,6 @@ def cb_left_side_rotate(self, context):
     obs = [ob for ob in ob_props if ob is not None]
     for ob in obs:
         ob.rotation_euler.x = self.left_side_rotate
-
     
     
 def cb_right_side_rotate(self, context):
@@ -1177,47 +1307,85 @@ def unregister():
     del(bpy.types.Object.zips_props)
 
 
-if __name__ == '__main__':
-    register()
+#if __name__ == '__main__':
+    #register()
 
 # -------------------------
-def do_everything(garment, left_path=None, right_path=None):
+def do_everything(garment, left_path=None, right_path=None, zipper_pull_normal=1, Bobjs=None):
     """garment is the garment blender obj.
     left path and right path is a list of vert
     indices for each side of the zipper"""
     register()
     
+    # set garment as active object
+    bpy.context.view_layer.objects.active = garment
+    for i in bpy.data.objects:
+        i.select_set(i.name==garment.name)        
+    
+    # unfinished. In case the zipper paths are not
+    #   provided
     if (left_path is None) | (right_path is None):
         lg = 'P_L ZIP'
         rg = 'P_R ZIP'
         
         lidx = verts_in_group(garment, name=lg)
         ridx = verts_in_group(garment, name=rg)
-        print(lidx, "what am i???????")
         key = garment.data.shape_keys.key_blocks['pre_wrap']
         lco = np.array([key.data[i].co for i in lidx], dtype=np.float32)
-        print(lco)
-    
-    # get the garment object
-    
-    # get left path
-    
-    # get right path
-    
-    # set left bottom    
 
-    # set right bottom    
+    path_setup('left_path', path=np.array(left_path))
+    path_setup('right_path', path=np.array(right_path))
+        
+    # Import module
+    module = garment.name + '_zips_data.py'
+    data = bpy.data.texts[module].as_module()
 
-    # set left top
+    self = garment.zips_props    
+    obs = bpy.data.objects
     
-    # set right top
-    
-    # set zipper pull
-    
-    # set left teeth
-    
-    # set right teeth
-#do_everything(bpy.context.object)
+    if Bobjs is None:
+        Bobjs = ['zipper_top_right',
+                 'zipper_bottom_right',
+                 'zipper_tooth_right',
+                 'zipper_top_left',
+                 'zipper_bottom_left',
+                 'zipper_tooth_left',
+                 'zipper_pull',
+                 ]
+            
+    self.right_top = obs[Bobjs[0]]
+    self.right_bottom = obs[Bobjs[1]]
+    self.right_tooth = obs[Bobjs[2]]
+    self.left_top = obs[Bobjs[3]]
+    self.left_bottom = obs[Bobjs[4]]
+    self.left_tooth = obs[Bobjs[5]]
+    self.zipper_pull = obs[Bobjs[6]]
+        
+    self.zipper_pull_offset = zipper_pull_normal
+    return
 
 # -------------------------
-    
+def test():
+    garment = bpy.data.objects['garment']    
+
+    Bobjs = ['zipper_top_right',
+             'zipper_bottom_right',
+             'zipper_tooth_right',
+             'zipper_top_left',
+             'zipper_bottom_left',
+             'zipper_tooth_left',
+             'zipper_pull',
+             'zipper_pull_armature'
+             ]
+
+    # Run append function to get blender objects
+
+    # test module !!! Just using it to get the points
+
+    data = bpy.data.texts['G_zips_data.py'].as_module()
+    left_path = data.left_path['path']
+    right_path = data.right_path['path']
+
+    do_everything(garment, left_path=left_path, right_path=right_path, zipper_pull_normal=0.5, Bobjs=None)
+
+test()
