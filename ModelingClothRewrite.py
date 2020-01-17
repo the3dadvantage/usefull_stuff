@@ -1,6 +1,5 @@
 
-# !!! might be able to use ob.update_from_editmode() instead of all the crap with the bmesh module !!!
-# update_from_editmode() will also detect changes in vertex groups without having to pop in and out.
+
 
 """ New Features: """
 # pause button using space bar or something with modal grab
@@ -12,6 +11,10 @@
 # Could even create a paint modal tool that expands the source where the user paints to create custom wrinkles.
 #   Wrinkle brush could take into account stroke direction, or could grow in all directions.
 #   Crease brush would be different making wrinkles more like what you would need to iron out.
+
+# could have a button to switch modes from animate to model. Model mode would turn down velocity and such.
+#   could even have stored user settings
+
 
 # Target:
 # Could make the cloth always read from the source shape key
@@ -484,7 +487,14 @@ def update_groups(cloth, obm=None):
     cloth.pin = get_weights(ob, 'MC_pin', obm=obm)[:, nax]
     #pin_arr = np.zeros(pin.shape[0]*3, dtype=np.float32)
     #pin_arr.shape = (pin.shape[0], 3)
-    cloth.pin_arr = get_co_mode(ob)
+    #cloth.pin_arr = get_co_mode(ob)
+
+
+# update the cloth ---------------
+def update_selection_from_editmode(cloth):
+    select = np.zeros(len(cloth.ob.data.vertices), dtype=np.bool)
+    cloth.ob.data.vertices.foreach_get('select', select)
+    cloth.pin_arr[select] = cloth.co[select]
 
 
 # update the cloth ---------------
@@ -576,56 +586,86 @@ def spring_force(cloth):
     # for pinning
     np.copyto(cloth.vel_start, cloth.co)
 
+    # get properties
+    gravity = cloth.ob.MC_props.gravity    
+    velocity = cloth.ob.MC_props.velocity    
+    stretch = cloth.ob.MC_props.stretch * 0.17
+    push = cloth.ob.MC_props.push    
+
     # add gravity before measuring stretch
-    gravity = cloth.ob.MC_props.gravity
+    
     cloth.co[:,2] += gravity
 
-    iters = 2
+    iters = cloth.ob.MC_props.iters
+    
+    
+    
+    
+    
     for i in range(iters):
     # apply pin force
         pin_vecs = (cloth.pin_arr - cloth.co) * cloth.pin
         cloth.co += pin_vecs
         #np.copyto(cloth.pin_arr, cloth.co)
 
+        #stretch = cloth.ob.MC_props.stretch
+        if False:    
+            if i == 0:
+                stretch *= 2
+                pu = push * 2
+            
         # (current vec, dot, length)
         cv, cd, cl = measure_edges(cloth.co, cloth.springs) # from current cloth state
+        move_l = cl - l
 
-        spring_dif = cl - l
+        # separate push springs
+        if push != 1:    
+            push_springs = move_l < 0
+            move_l[push_springs] *= push
+        
+        
+        move = cv * ((move_l / cl) * stretch)[:,None]
 
-        #push = spring_dif < 0
-
-        #spring_dif[~push] *= 0
-        '''Applys the magnitudes of v1 to v2 assuming N x 3 arrays'''
-        # get the move vecs with mag swap
-        div = np.nan_to_num(d/cd)
-        #div = d/cd
-
-        if False: # this might be a good way to create heat
-            div[~push] *= 0
-
-        #div[push] *= .5
-
-        swap = cv * np.sqrt(div)[:, nax]
-        move = cv - swap
-        #if i == 0:
-            #move[~push] *= 4
-            #move *= 4
-        #if i == 1:
-            #move[~push] *= 2
-
-        #if i == 1:
-            #move[push] *= 0
+        # now we add the current co to to move to get the locations
+        #   each spring says we should be at.
+        #   We take the stretch of each to get the weight
+        #   Next we do weighted agerage using the stretch to weight
+        #   
+        if False:    
+            "for each co:"    
+            sum = 1/np.sum(move_l)
+            weights = move_l/np.sum(move_l) # so the weights add up to one
+            
 
 
-        if True: # experimental damping
-            move *= np.sqrt(div)[:, nax]
 
-        stretch = cloth.ob.MC_props.stretch
-        if i == 0:
-            stretch *= 2
-        move *= stretch
+        #if True: # experimental damping
+            #move *= np.sqrt(div)[:, nax]
+
+
+        
+        #move *= stretch
         # now get the length of move so we can square it
-
+        
+        # ---------------------------- test 1
+        # ---------------------------- test 1
+        # get the normalized move vecs
+        #U_move = 
+        
+        # get the normalized sum of the vecs
+        
+        # get the dot product.
+        # if there are several pointing the same direction as move
+        #   they will have a dot close to one so 1 + 1 + 1 etc. 
+        #   We can divide by the final number
+        #   This will prevent multiple vecs pointing the same
+        #   direction from adding too much and increase the
+        #   value of vecs pointing the opposite direction. 
+        
+        # ---------------------------- end test 1
+        # ---------------------------- end test 1        
+        
+        
 
         # post indexing ------------------------
         flipped = move[cloth.e_fancy]
@@ -797,8 +837,11 @@ def cloth_physics(ob, cloth, collider):
 
 
     if cloth.mode is None:
-        cloth.mode = 1
         # switched out of edit mode
+        cloth.mode = 1
+        update_groups(cloth, cloth.obm)
+        update_selection_from_editmode(cloth)
+        cloth.vel_start = cloth.co
 
     # OBJECT MODE ====== :
     #cloth.co = get_co_shape(cloth.ob, "MC_current")
@@ -1121,12 +1164,37 @@ def cb_continuous(self, context):
     # updates groups when we toggle "Continuous"
     ob = bpy.context.object
     cloth = MC_data["cloths"][ob['MC_cloth_id']]
+    
+    """need to test this and fix if needed. Test adding geometry while paused.
+    Need to work with pinning. If a person works with the cloth
+    and decides to pin something in it's current state
+    it will reset the pinned verts to the basis. Don't want that!!!"""
+    
     if ob.data.is_editmode:
+        return
         cloth.co = np.array([v.co for v in cloth.obm.verts])
         update_groups(cloth, cloth.obm)
+
+        translate_vecs = cloth.pin_arr - cloth.co
+        #np.copyto(cloth.co, cloth.pin_arr)
+        #np.copyto(cloth.pin_arr, cloth.co)
+        cloth.pin_arr += translate_vecs
+
+
         return
     cloth.co = get_co_shape(ob, key='MC_current')
     update_groups(cloth, None)
+    return
+
+    
+    
+    np.copyto(cloth.co, cloth.vel_start, where=cloth.selected[:,nax])
+    
+    
+    cloth.pin_arr[cloth.selected] = (cloth.co[cloth.selected] + translate_vecs)
+               
+
+
 
 
 # calback functions ----------------
@@ -1246,11 +1314,20 @@ class McPropsObject(bpy.types.PropertyGroup):
     target:\
     bpy.props.PointerProperty(type=bpy.types.Object, description="Use this object as the target for stretch and bend springs", update=cb_target)
 
-    stretch:\
-    bpy.props.FloatProperty(name="Stretch", description="Strength of the stretch springs", default=.2, min=0, max=1, soft_min= -2, soft_max=2, precision=3)
-
     gravity:\
     bpy.props.FloatProperty(name="Gravity", description="Strength of the gravity", default=0.0, min=-1000, max=1000, soft_min= -10, soft_max=10, precision=3)
+
+    velocity:\
+    bpy.props.FloatProperty(name="Velocity", description="Maintains Velocity", default=0.9, min= -1000, max=1000, soft_min= 0.0, soft_max=1, precision=3)
+
+    iters:\
+    bpy.props.IntProperty(name="Iters", description="Number of iterations of cloth solver", default=2, min=1, max=1000)#, precision=1)
+
+    stretch:\
+    bpy.props.FloatProperty(name="Stretch", description="Strength of the stretch springs", default=1, min=0, max=10, soft_min= 0, soft_max=1, precision=3)
+
+    push:\
+    bpy.props.FloatProperty(name="Push", description="Strength of the push springs", default=1, min=0, max=1, soft_min= -2, soft_max=2, precision=3)
 
 
 
@@ -1453,9 +1530,16 @@ class PANEL_PT_modelingClothSettings(bpy.types.Panel):
             cloth = ob.MC_props.cloth
             if cloth:
                 col = layout.column(align=True)
+                col.scale_y = 1.5
                 col.label(text='Forces')
-                col.prop(ob.MC_props, "stretch", text="stretch")
                 col.prop(ob.MC_props, "gravity", text="gravity")
+                col.prop(ob.MC_props, "velocity", text="velocity")
+                #col.scale_y = 1
+                col = layout.column(align=True)
+                col.prop(ob.MC_props, "iters", text="stretch iterations")
+                col.prop(ob.MC_props, "stretch", text="stretch")
+                col.prop(ob.MC_props, "push", text="push")
+
 
 # ^                                                          ^ #
 # ^                     END draw code                        ^ #
@@ -1568,6 +1652,7 @@ def unregister():
 
     # props
     del(bpy.types.Scene.MC_props)
+    del(bpy.types.Object.MC_props)
 
     # clean dead versions of the undo handler
     handler_names = np.array([i.__name__ for i in bpy.app.handlers.undo_post])
