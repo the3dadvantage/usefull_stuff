@@ -406,7 +406,7 @@ def create_instance():
     cloth.obm = get_bmesh(ob)
 
     if ob.data.is_editmode:
-        cloth.obm.verts.layers.deform.verify()
+        cloth.obm.verts.layers.deform.verify() # for vertex groups
         #cloth.obm.verts.layers.deform.new()
         update_groups(cloth, cloth.obm)
     else:
@@ -449,7 +449,8 @@ def create_instance():
     # velocity array
     cloth.vel_start = np.copy(cloth.co)
     cloth.vel = np.copy(cloth.co)
-
+    cloth.stretch_array = np.zeros(cloth.vel_start.shape[0], dtype=np.float32) # for calculating the weights of the mean
+    
     cloth.target_co = get_co_mode(cloth.target) # (will be None if target is None)
     cloth.velocity = Nx3(ob)
 
@@ -575,13 +576,11 @@ def stretch_springs(cloth, target=None): # !!! need to finish this
 
 # update the cloth ---------------
 def spring_force(cloth):
-
-
+    
     dynamic = True
     if dynamic:
         # springs (vec, dot, length) # could put: if dynamic
         v, d, l = stretch_springs(cloth, cloth.target) # from target or source key
-        print('this is d.shape', d)
     
     # for pinning
     np.copyto(cloth.vel_start, cloth.co)
@@ -591,99 +590,46 @@ def spring_force(cloth):
     velocity = cloth.ob.MC_props.velocity    
     stretch = cloth.ob.MC_props.stretch * 0.17
     push = cloth.ob.MC_props.push    
-
-    # add gravity before measuring stretch
     
-    cloth.co[:,2] += gravity
+    # let the pin stop the gravity in advance
 
+    cloth.velocity[:,2] += (gravity * (-cloth.pin + 1).ravel())
+    cloth.co += cloth.velocity
+
+    vel_zero = np.copy(cloth.co)
+    
     iters = cloth.ob.MC_props.iters
-    
-    
-    
-    
-    
     for i in range(iters):
-    # apply pin force
+    
+    # apply pin force each iteration
         pin_vecs = (cloth.pin_arr - cloth.co) * cloth.pin
         cloth.co += pin_vecs
-        #np.copyto(cloth.pin_arr, cloth.co)
 
-        #stretch = cloth.ob.MC_props.stretch
-        if False:    
-            if i == 0:
-                stretch *= 2
-                pu = push * 2
-            
         # (current vec, dot, length)
         cv, cd, cl = measure_edges(cloth.co, cloth.springs) # from current cloth state
-        move_l = cl - l
+        move_l = (cl - l) * stretch
 
         # separate push springs
         if push != 1:    
             push_springs = move_l < 0
             move_l[push_springs] *= push
         
+        # mean method -------------------
+        cloth.stretch_array[:] = 0.0
+        rock_hard_abs = np.abs(move_l)[cloth.e_fancy]
+        np.add.at(cloth.stretch_array, cloth.v_fancy, rock_hard_abs)
+        weights = rock_hard_abs / cloth.stretch_array[cloth.v_fancy]
+        # mean method -------------------
         
-        move = cv * ((move_l / cl) * stretch)[:,None]
-
-        # now we add the current co to to move to get the locations
-        #   each spring says we should be at.
-        #   We take the stretch of each to get the weight
-        #   Next we do weighted agerage using the stretch to weight
-        #   
-        if False:    
-            "for each co:"    
-            sum = 1/np.sum(move_l)
-            weights = move_l/np.sum(move_l) # so the weights add up to one
-            
-
-
-
-        #if True: # experimental damping
-            #move *= np.sqrt(div)[:, nax]
-
-
+        # apply forces ------------------
+        move = cv * (move_l / cl)[:,None]
+        midx = move[cloth.e_fancy]
+        midx *= (cloth.flip * np.nan_to_num((weights)[:,None]))
+        np.add.at(cloth.co, cloth.v_fancy, midx)
         
-        #move *= stretch
-        # now get the length of move so we can square it
-        
-        # ---------------------------- test 1
-        # ---------------------------- test 1
-        # get the normalized move vecs
-        #U_move = 
-        
-        # get the normalized sum of the vecs
-        
-        # get the dot product.
-        # if there are several pointing the same direction as move
-        #   they will have a dot close to one so 1 + 1 + 1 etc. 
-        #   We can divide by the final number
-        #   This will prevent multiple vecs pointing the same
-        #   direction from adding too much and increase the
-        #   value of vecs pointing the opposite direction. 
-        
-        # ---------------------------- end test 1
-        # ---------------------------- end test 1        
-        
-        
-
-        # post indexing ------------------------
-        flipped = move[cloth.e_fancy]
-        flipped *= cloth.flip
-
-
-
-
-        # for pinning
-        #np.copyto(cloth.pin_arr, cloth.co)
-
-        np.add.at(cloth.co, cloth.v_fancy, flipped)
-
-        # apply pin force
+        # add pin vecs ------------------
         pin_vecs = (cloth.pin_arr - cloth.co)
         cloth.co += (pin_vecs * cloth.pin)
-
-
 
         #if cloth.ob.MC_props.pause_selected:
         pause_selected = True
@@ -692,22 +638,15 @@ def spring_force(cloth):
 
                 # need to check if copyto is faster than:
                 #cloth.co[cloth.selected] = cloth.pin_arr[cloth.selected]
-                #print(cloth.selected)
                 translate_vecs = cloth.pin_arr[cloth.selected] - cloth.co[cloth.selected]
-                np.copyto(cloth.co, cloth.pin_arr, where=cloth.selected[:,nax])
-                #np.copyto(cloth.pin_arr, cloth.co, where=cloth.selected[:,nax])
-                #cloth.pin_arr[cloth.selected] += translate_vecs
-                
-                
                 np.copyto(cloth.co, cloth.vel_start, where=cloth.selected[:,nax])
-                
-                
                 cloth.pin_arr[cloth.selected] = (cloth.co[cloth.selected] + translate_vecs)
-                #np.copyto(cloth.vel_start, cloth.co, where=cloth.selected[:,nax])
-
-
-        #spring_move = cloth.co - cloth.vel_start
-        #cloth.co += spring_move * .5
+    
+    # extrapolate maybe?
+    v_move = cloth.co - vel_zero
+    cloth.velocity += v_move
+    #print(spring_move)
+    #cloth.co -= spring_move * 2
 
 
 
@@ -799,7 +738,7 @@ def cloth_physics(ob, cloth, collider):
             cloth.obm.verts.ensure_lookup_table()
             update_groups(cloth, cloth.obm)
             cloth.vel_start = get_co_edit(None, cloth.obm)
-
+            cloth.stretch_array = np.zeros(cloth.vel_start.shape[0], dtype=np.float32)
 
         # updating the mesh coords -----------------@@
         # detects user changes to the mesh like grabbing verts
