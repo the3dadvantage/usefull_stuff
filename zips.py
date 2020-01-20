@@ -1311,7 +1311,7 @@ def unregister():
     #register()
 
 # -------------------------
-def do_everything(garment, left_path=None, right_path=None, zipper_pull_normal=1):
+def place_zipper_on_garment(garment, left_path=None, right_path=None, zipper_pull_normal=1):
     """garment is the garment blender obj.
     left path and right path is a list of vert
     indices for each side of the zipper"""
