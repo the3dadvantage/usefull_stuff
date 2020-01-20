@@ -1376,6 +1376,6 @@ def test():
     left_path = data.left_path['path']
     right_path = data.right_path['path']
 
-    do_everything(garment, left_path=left_path, right_path=right_path, zipper_pull_normal=0.5)
+    place_zipper_on_garment(garment, left_path=left_path, right_path=right_path, zipper_pull_normal=0.5)
 
 #test()
