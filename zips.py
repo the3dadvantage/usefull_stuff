@@ -1311,7 +1311,7 @@ def unregister():
     #register()
 
 # -------------------------
-def do_everything(garment, left_path=None, right_path=None, zipper_pull_normal=1, Bobjs=None):
+def do_everything(garment, left_path=None, right_path=None, zipper_pull_normal=1):
     """garment is the garment blender obj.
     left path and right path is a list of vert
     indices for each side of the zipper"""
@@ -1322,8 +1322,7 @@ def do_everything(garment, left_path=None, right_path=None, zipper_pull_normal=1
     for i in bpy.data.objects:
         i.select_set(i.name==garment.name)        
     
-    # unfinished. In case the zipper paths are not
-    #   provided
+    # !!! unfinished !!! In case the zipper paths are not
     if (left_path is None) | (right_path is None):
         lg = 'P_L ZIP'
         rg = 'P_R ZIP'
@@ -1336,30 +1335,32 @@ def do_everything(garment, left_path=None, right_path=None, zipper_pull_normal=1
     path_setup('left_path', path=np.array(left_path))
     path_setup('right_path', path=np.array(right_path))
         
-    # Import module
-    module = garment.name + '_zips_data.py'
-    data = bpy.data.texts[module].as_module()
-
-    self = garment.zips_props    
-    obs = bpy.data.objects
+    # check and assign each property
+    self = garment.zips_props
+    obs = bpy.data.objects        
+    if 'zipper_top_stop_L' in obs:
+        self.left_top = obs['zipper_top_stop_L']
     
-    if Bobjs is None:
-        Bobjs = ['zipper_top_right',
-                 'zipper_bottom_right',
-                 'zipper_tooth_right',
-                 'zipper_top_left',
-                 'zipper_bottom_left',
-                 'zipper_tooth_left',
-                 'zipper_pull',
-                 ]
-            
-    self.right_top = obs[Bobjs[0]]
-    self.right_bottom = obs[Bobjs[1]]
-    self.right_tooth = obs[Bobjs[2]]
-    self.left_top = obs[Bobjs[3]]
-    self.left_bottom = obs[Bobjs[4]]
-    self.left_tooth = obs[Bobjs[5]]
-    self.zipper_pull = obs[Bobjs[6]]
+    if 'zipper_top_stop_R' in obs:
+        self.right_top = obs['zipper_top_stop_R']
+        
+    if 'zipper_retaining_box' in obs:
+        self.right_bottom = obs['zipper_retaining_box']
+    
+    if 'zipper_bottom_stop' in obs:
+        self.right_bottom = obs['zipper_bottom_stop']
+        
+    if 'zipper_insert_pin' in obs:
+        self.left_bottom = obs['zipper_insert_pin']
+        
+    if 'zipper_tooth_L' in obs:
+        self.left_tooth = obs['zipper_tooth_L']
+    
+    if 'zipper_tooth_R' in obs:
+        self.right_tooth = obs['zipper_tooth_R']
+        
+    if 'zipper_slider_body' in obs:
+        self.zipper_pull = obs['zipper_slider_body']
         
     self.zipper_pull_offset = zipper_pull_normal
     return
@@ -1368,24 +1369,13 @@ def do_everything(garment, left_path=None, right_path=None, zipper_pull_normal=1
 def test():
     garment = bpy.data.objects['garment']    
 
-    Bobjs = ['zipper_top_right',
-             'zipper_bottom_right',
-             'zipper_tooth_right',
-             'zipper_top_left',
-             'zipper_bottom_left',
-             'zipper_tooth_left',
-             'zipper_pull',
-             'zipper_pull_armature'
-             ]
-
     # Run append function to get blender objects
 
     # test module !!! Just using it to get the points
-
     data = bpy.data.texts['G_zips_data.py'].as_module()
     left_path = data.left_path['path']
     right_path = data.right_path['path']
 
-    do_everything(garment, left_path=left_path, right_path=right_path, zipper_pull_normal=0.5, Bobjs=None)
+    do_everything(garment, left_path=left_path, right_path=right_path, zipper_pull_normal=0.5)
 
-test()
+#test()
