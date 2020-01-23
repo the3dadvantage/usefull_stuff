@@ -1335,32 +1335,49 @@ def place_zipper_on_garment(garment, left_path=None, right_path=None, zipper_pul
     path_setup('left_path', path=np.array(left_path))
     path_setup('right_path', path=np.array(right_path))
 
-    # check and assign each property
+    # check and assign each property.
+    # rename objects since files can have multiple zippers
     self = garment.zips_props
     obs = bpy.data.objects
     if 'zipper_top_stop_L' in obs:
-        self.left_top = obs['zipper_top_stop_L']
-
+        ob = obs['zipper_top_stop_L']
+        self.left_top = ob
+        ob.name = ob.name + '000'
+        
     if 'zipper_top_stop_R' in obs:
-        self.right_top = obs['zipper_top_stop_R']
+        ob = obs['zipper_top_stop_R']
+        self.right_top = ob
+        ob.name = ob.name + '000'
 
     if 'zipper_retaining_box' in obs:
-        self.right_bottom = obs['zipper_retaining_box']
+        ob = obs['zipper_retaining_box']
+        self.right_bottom = ob
+        ob.name = ob.name + '000'
 
     if 'zipper_bottom_stop' in obs:
-        self.right_bottom = obs['zipper_bottom_stop']
+        ob = obs['zipper_bottom_stop']
+        self.right_bottom = ob
+        ob.name = ob.name + '000'
 
     if 'zipper_insert_pin' in obs:
-        self.left_bottom = obs['zipper_insert_pin']
+        ob = obs['zipper_insert_pin']
+        self.left_bottom = ob
+        ob.name = ob.name + '000'
 
     if 'zipper_tooth_L' in obs:
-        self.left_tooth = obs['zipper_tooth_L']
+        ob = obs['zipper_tooth_L']
+        self.left_tooth = ob
+        ob.name = ob.name + '000'
 
     if 'zipper_tooth_R' in obs:
-        self.right_tooth = obs['zipper_tooth_R']
+        ob = obs['zipper_tooth_R']
+        self.right_tooth = ob
+        ob.name = ob.name + '000'
 
     if 'zipper_slider_body' in obs:
-        self.zipper_pull = obs['zipper_slider_body']
+        ob = obs['zipper_slider_body']
+        self.zipper_pull = ob
+        ob.name = ob.name + '000'
 
     self.zipper_pull_offset = zipper_pull_normal
     return
@@ -1378,4 +1395,4 @@ def test():
 
     place_zipper_on_garment(garment, left_path=left_path, right_path=right_path, zipper_pull_normal=0.5)
 
-#test()
+test()
