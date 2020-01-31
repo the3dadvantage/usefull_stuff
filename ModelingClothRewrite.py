@@ -96,6 +96,13 @@ def T(type=1, message=''):
 #                    universal functions                       #
 #                                                              #
 
+def manage_locations_as_strings(old, new):
+    # vertex coords for each point in old to a key as string
+    pass
+    
+    
+
+
 # universal ---------------
 def co_overwrite(ob, ar):
     """Fast way to overwite"""
@@ -404,6 +411,7 @@ def create_instance():
 
     # stuff ---------------
     cloth.obm = get_bmesh(ob)
+    cloth.pin = get_weights(ob, 'MC_pin', obm=cloth.obm)[:, nax]
 
     if ob.data.is_editmode:
         cloth.obm.verts.layers.deform.verify() # for vertex groups
@@ -444,12 +452,15 @@ def create_instance():
         cloth.co = get_co_shape(ob, 'MC_current')
 
     # for pinning
-    cloth.pin_arr = np.copy(cloth.co)
+    #cloth.pin_arr = np.copy(cloth.co)
 
-    # velocity array
-    cloth.vel_start = np.copy(cloth.co)
-    cloth.vel = np.copy(cloth.co)
-    cloth.stretch_array = np.zeros(cloth.vel_start.shape[0], dtype=np.float32) # for calculating the weights of the mean
+    # Allocate arrys
+    cloth.select_start = np.copy(cloth.co)
+    cloth.pin_arr = np.copy(cloth.co)
+    cloth.vel = np.zeros_like(cloth.co)
+    cloth.vel_zero = np.zeros_like(cloth.co)
+    cloth.feedback = np.zeros_like(cloth.co)
+    cloth.stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32) # for calculating the weights of the mean
     
     cloth.target_co = get_co_mode(cloth.target) # (will be None if target is None)
     cloth.velocity = Nx3(ob)
@@ -481,21 +492,42 @@ def create_instance():
 #                                                              #
 
 # update the cloth ---------------
-def update_groups(cloth, obm=None):
-    # needs to work in edit mode!!!
+def update_groups(cloth, obm=None, geometry=False):
     ob = cloth.ob
+
     # vertex groups
+    current = np.copy(cloth.pin)
     cloth.pin = get_weights(ob, 'MC_pin', obm=obm)[:, nax]
-    #pin_arr = np.zeros(pin.shape[0]*3, dtype=np.float32)
-    #pin_arr.shape = (pin.shape[0], 3)
-    #cloth.pin_arr = get_co_mode(ob)
+    if geometry:
+        old = current.shape[0]
+        new = cloth.pin.shape[0]
+        dif = new - old
+        if dif > 0:
+            fix = np.zeros_like(cloth.pin)
+            fix[:old] += current
+            current = fix
+            cloth.pin_arr = np.append(cloth.pin_arr, cloth.co[old:], axis=0)
+            zeros = np.zeros_like(cloth.co[old:])
+            cloth.velocity = np.append(cloth.velocity, zeros, axis=0)
+            cloth.vel_zero = np.copy(cloth.co)
+            cloth.feedback = np.copy(cloth.co)
+        else:
+            cloth.pin_arr = np.copy(cloth.co)        
+            cloth.vel_zero = np.copy(cloth.co)
+            cloth.feedback = np.copy(cloth.co)
+            cloth.velocity = np.zeros_like(cloth.co)
+            return
+    # !!! Need to store cloth.pin_arr in the save file !!!
+    changed = (cloth.pin - current) != 0 # Have to manage the location of the pin verts with weights less than one
+    if hasattr(cloth, 'co'):
+        cloth.pin_arr[changed.ravel()] = cloth.co[changed.ravel()]
 
 
 # update the cloth ---------------
 def update_selection_from_editmode(cloth):
     select = np.zeros(len(cloth.ob.data.vertices), dtype=np.bool)
     cloth.ob.data.vertices.foreach_get('select', select)
-    cloth.pin_arr[select] = cloth.co[select]
+    #cloth.pin_arr[select] = cloth.co[select]
 
 
 # update the cloth ---------------
@@ -574,36 +606,44 @@ def stretch_springs(cloth, target=None): # !!! need to finish this
     return measure_edges(co, cloth.springs)
 
 
+
+
+
+
+def surface_sew():
+    # get the nearest 
+    pass
+
+
+
+
 # update the cloth ---------------
 def spring_force(cloth):
-    
-    dynamic = True
-    if dynamic:
-        # springs (vec, dot, length) # could put: if dynamic
-        v, d, l = stretch_springs(cloth, cloth.target) # from target or source key
-    
-    # for pinning
-    np.copyto(cloth.vel_start, cloth.co)
 
     # get properties
-    gravity = cloth.ob.MC_props.gravity    
-    velocity = cloth.ob.MC_props.velocity    
-    stretch = cloth.ob.MC_props.stretch * 0.17
-    push = cloth.ob.MC_props.push    
+    grav = cloth.ob.MC_props.gravity * 0.001  
+    vel = cloth.ob.MC_props.velocity    
+    feedback_val = cloth.ob.MC_props.feedback
+    stretch = cloth.ob.MC_props.stretch * 0.5
+    push = cloth.ob.MC_props.push  
     
-    # let the pin stop the gravity in advance
+    # measure source
+    dynamic = True
+    if dynamic:
+        v, d, l = stretch_springs(cloth, cloth.target) # from target or source key
+    
+    cloth.select_start[:] = cloth.co
 
-    cloth.velocity[:,2] += (gravity * (-cloth.pin + 1).ravel())
     cloth.co += cloth.velocity
-
-    vel_zero = np.copy(cloth.co)
+    cloth.vel_zero[:] = cloth.co
+    cloth.feedback[:] = cloth.co
     
     iters = cloth.ob.MC_props.iters
     for i in range(iters):
     
     # apply pin force each iteration
-        pin_vecs = (cloth.pin_arr - cloth.co) * cloth.pin
-        cloth.co += pin_vecs
+        #pin_vecs = (cloth.pin_arr - cloth.co) * cloth.pin
+        #cloth.co += pin_vecs
 
         # (current vec, dot, length)
         cv, cd, cl = measure_edges(cloth.co, cloth.springs) # from current cloth state
@@ -618,13 +658,13 @@ def spring_force(cloth):
         cloth.stretch_array[:] = 0.0
         rock_hard_abs = np.abs(move_l)[cloth.e_fancy]
         np.add.at(cloth.stretch_array, cloth.v_fancy, rock_hard_abs)
-        weights = rock_hard_abs / cloth.stretch_array[cloth.v_fancy]
+        weights = np.nan_to_num(rock_hard_abs / cloth.stretch_array[cloth.v_fancy])
         # mean method -------------------
         
         # apply forces ------------------
-        move = cv * (move_l / cl)[:,None]
+        move = cv * np.nan_to_num(move_l / cl)[:,None]
         midx = move[cloth.e_fancy]
-        midx *= (cloth.flip * np.nan_to_num((weights)[:,None]))
+        midx *= (cloth.flip * (weights)[:,None])
         np.add.at(cloth.co, cloth.v_fancy, midx)
         
         # add pin vecs ------------------
@@ -638,18 +678,24 @@ def spring_force(cloth):
 
                 # need to check if copyto is faster than:
                 #cloth.co[cloth.selected] = cloth.pin_arr[cloth.selected]
+                
+                pass
                 translate_vecs = cloth.pin_arr[cloth.selected] - cloth.co[cloth.selected]
-                np.copyto(cloth.co, cloth.vel_start, where=cloth.selected[:,nax])
-                cloth.pin_arr[cloth.selected] = (cloth.co[cloth.selected] + translate_vecs)
+                #np.copyto(cloth.co, cloth.select_start, where=cloth.selected[:,nax])
+                #cloth.pin_arr[cloth.selected] = cloth.co[cloth.selected] + translate_vecs
+                cloth.co[cloth.selected] = cloth.select_start[cloth.selected]
+                cloth.pin_arr[cloth.selected] = cloth.co[cloth.selected] + translate_vecs#cloth.select_start[cloth.selected]
     
-    # extrapolate maybe?
-    v_move = cloth.co - vel_zero
+    # extrapolate maybe? # get spring move, multiply vel by fraction, add spring move
+    spring_move = cloth.co - cloth.feedback
+    v_move = cloth.co - cloth.vel_zero
+
     cloth.velocity += v_move
-    #print(spring_move)
-    #cloth.co -= spring_move * 2
-
-
-
+    cloth.velocity += spring_move * feedback_val
+    cloth.velocity *= vel    
+    
+    cloth.velocity[:,2] += grav
+    #cloth.velocity[:,2] += (grav * (-cloth.pin + 1).ravel())
 
 
 
@@ -731,14 +777,24 @@ def cloth_physics(ob, cloth, collider):
             return
         if not same:
             # for pinning
+            print("DANGER!!!!!!!!!!!!!!!!!!")
+            print("DANGER!!!!!!!!!!!!!!!!!!")
+            print("DANGER!!!!!!!!!!!!!!!!!!")
+            print("DANGER!!!!!!!!!!!!!!!!!!")
+            print("DANGER!!!!!!!!!!!!!!!!!!")
+            print("DANGER!!!!!!!!!!!!!!!!!!")
             np.copyto(cloth.pin_arr, cloth.co)
             cloth.springs, cloth.v_fancy, cloth.e_fancy, cloth.flip = get_springs(cloth, cloth.obm)
             cloth.geometry = get_mesh_counts(ob, cloth.obm)
             # cloth.sew_springs = get_sew_springs() # build
             cloth.obm.verts.ensure_lookup_table()
-            update_groups(cloth, cloth.obm)
-            cloth.vel_start = get_co_edit(None, cloth.obm)
-            cloth.stretch_array = np.zeros(cloth.vel_start.shape[0], dtype=np.float32)
+            cloth.select_start = get_co_edit(None, cloth.obm)
+            cloth.co = np.array([v.co for v in cloth.obm.verts])
+            cloth.stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32)
+            cloth.selected = np.array([v.select for v in cloth.obm.verts])
+
+            update_groups(cloth, cloth.obm, True)
+            cloth.ob.update_from_editmode()
 
         # updating the mesh coords -----------------@@
         # detects user changes to the mesh like grabbing verts
@@ -780,7 +836,7 @@ def cloth_physics(ob, cloth, collider):
         cloth.mode = 1
         update_groups(cloth, cloth.obm)
         update_selection_from_editmode(cloth)
-        cloth.vel_start = cloth.co
+        #cloth.vel_start = cloth.co
 
     # OBJECT MODE ====== :
     #cloth.co = get_co_shape(cloth.ob, "MC_current")
@@ -1114,26 +1170,16 @@ def cb_continuous(self, context):
         cloth.co = np.array([v.co for v in cloth.obm.verts])
         update_groups(cloth, cloth.obm)
 
-        translate_vecs = cloth.pin_arr - cloth.co
+        #translate_vecs = cloth.pin_arr - cloth.co
         #np.copyto(cloth.co, cloth.pin_arr)
         #np.copyto(cloth.pin_arr, cloth.co)
-        cloth.pin_arr += translate_vecs
+        #cloth.pin_arr += translate_vecs
 
 
         return
     cloth.co = get_co_shape(ob, key='MC_current')
     update_groups(cloth, None)
     return
-
-    
-    
-    np.copyto(cloth.co, cloth.vel_start, where=cloth.selected[:,nax])
-    
-    
-    cloth.pin_arr[cloth.selected] = (cloth.co[cloth.selected] + translate_vecs)
-               
-
-
 
 
 # calback functions ----------------
@@ -1257,7 +1303,12 @@ class McPropsObject(bpy.types.PropertyGroup):
     bpy.props.FloatProperty(name="Gravity", description="Strength of the gravity", default=0.0, min=-1000, max=1000, soft_min= -10, soft_max=10, precision=3)
 
     velocity:\
-    bpy.props.FloatProperty(name="Velocity", description="Maintains Velocity", default=0.9, min= -1000, max=1000, soft_min= 0.0, soft_max=1, precision=3)
+    bpy.props.FloatProperty(name="Velocity", description="Maintains Velocity", default=0.777, min= -1000, max=1000, soft_min= 0.0, soft_max=1, precision=3)
+
+
+    feedback:\
+    bpy.props.FloatProperty(name="Feedback", description="Extrapolate for faster solve", default=1, min= -1000, max=1000, soft_min= 0.0, soft_max=1, precision=3)
+
 
     iters:\
     bpy.props.IntProperty(name="Iters", description="Number of iterations of cloth solver", default=2, min=1, max=1000)#, precision=1)
@@ -1312,13 +1363,16 @@ class MCResetToBasisShape(bpy.types.Operator):
             bpy.ops.object.mode_set(mode='OBJECT')
 
         reset_shapes(ob)
-        bco = get_co_shape(ob, "Basis")
         cloth = MC_data['cloths'][ob['MC_cloth_id']]
-        cloth.co = bco
-        cloth.pin_arr = np.copy(bco)
-        cloth.vel_start = np.copy(bco)
-        ob.data.shape_keys.key_blocks['MC_current'].data.foreach_set('co', bco.ravel())
-
+        
+        cloth.co = get_co_shape(ob, "Basis")
+        cloth.velocity[:] = 0
+        cloth.pin_arr[:] = cloth.co
+        cloth.feedback[:] = 0
+        cloth.select_start[:] = cloth.co
+        
+        current_key = ob.data.shape_keys.key_blocks['MC_current'] 
+        current_key.data.foreach_set('co', cloth.co.ravel())
         bpy.ops.object.mode_set(mode=mode)
         ob.data.update()
         return {'FINISHED'}
@@ -1338,12 +1392,13 @@ class MCResetSelectedToBasisShape(bpy.types.Operator):
         if ob.data.is_editmode:
             bpy.ops.object.mode_set(mode='OBJECT')
 
+        cloth = MC_data['cloths'][ob['MC_cloth_id']]
         reset_shapes(ob)
         bco = get_co_shape(ob, "Basis")
-        cloth = MC_data['cloths'][ob['MC_cloth_id']]
         cloth.co[cloth.selected] = bco[cloth.selected]
         cloth.pin_arr[cloth.selected] = bco[cloth.selected]
-        cloth.vel_start[cloth.selected] = bco[cloth.selected]
+        cloth.select_start[cloth.selected] = bco[cloth.selected]
+        cloth.feedback[cloth.selected] = 0
         
         bco[~cloth.selected] = cloth.co[~cloth.selected]
         ob.data.shape_keys.key_blocks['MC_current'].data.foreach_set('co', bco.ravel())
@@ -1473,12 +1528,13 @@ class PANEL_PT_modelingClothSettings(bpy.types.Panel):
                 col.label(text='Forces')
                 col.prop(ob.MC_props, "gravity", text="gravity")
                 col.prop(ob.MC_props, "velocity", text="velocity")
+
                 #col.scale_y = 1
                 col = layout.column(align=True)
                 col.prop(ob.MC_props, "iters", text="stretch iterations")
                 col.prop(ob.MC_props, "stretch", text="stretch")
                 col.prop(ob.MC_props, "push", text="push")
-
+                col.prop(ob.MC_props, "feedback", text="feedback")
 
 # ^                                                          ^ #
 # ^                     END draw code                        ^ #
