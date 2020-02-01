@@ -289,6 +289,40 @@ def get_weights(ob, name, obm=None):
             arr[idx] = w
 
     return arr
+
+
+def inside_triangles(tris, points, check=True):
+    
+    origins = tris[:, 0]
+    cross_vecs = tris[:, 1:] - origins[:, nax]    
+    v2 = points - origins
+
+    # ---------
+    v0 = cross_vecs[:,0]
+    v1 = cross_vecs[:,1]
+    
+    d00_d11 = np.einsum('ijk,ijk->ij', cross_vecs, cross_vecs)
+    d00 = d00_d11[:,0]
+    d11 = d00_d11[:,1]
+    d01 = np.einsum('ij,ij->i', v0, v1)
+    d02 = np.einsum('ij,ij->i', v0, v2)
+    d12 = np.einsum('ij,ij->i', v1, v2)
+
+    div = 1 / (d00 * d11 - d01 * d01)
+    u = (d11 * d02 - d01 * d12) * div
+    v = (d00 * d12 - d01 * d02) * div
+    
+    weights = np.array([1 - (u+v), u, v, ])
+    if not check:
+        return weights.T
+    
+    check = np.all(weights > 0, axis=0)
+    # check if bitwise is faster when using lots of tris
+    if False:    
+        check = (u > 0) & (v > 0) & (u + v < 1)
+
+    return weights.T, check
+
 # ^                                                          ^ #
 # ^                 END universal functions                  ^ #
 # ============================================================ #
@@ -299,6 +333,56 @@ def get_weights(ob, name, obm=None):
 # ============================================================ #
 #                   precalculated data                         #
 #                                                              #
+
+# precalculated ---------------
+def closest_point_mesh(obm, edit_obj, target):
+    """Uses bmesh method to get CPM"""
+    context = bpy.context
+    scene = context.scene
+
+    me = edit_obj.data
+    mesh_objects = [target]
+    bm = bmesh.new()
+
+    smwi = target.matrix_world.inverted()
+    bm.from_mesh(me)
+    bm.verts.ensure_lookup_table()
+    vert = bm.verts[0]
+    for vert in bm.verts:    
+        v1 = edit_obj.matrix_world @ vert.co # global face median
+        local_pos = smwi @ v1  # face cent in target local space
+
+        (hit, loc, norm, face_index) = target.closest_point_on_mesh(local_pos)
+        if hit:
+            v2 = target.matrix_world @ loc
+            bpy.ops.object.empty_add(location=v2)
+            #print(target.name, (v2 - v1).length)
+            #print(face_index)
+    bm.clear()
+
+
+# precalculated ---------------
+def create_surface_follow_data(active, cloths):
+    """Need to run this every time
+    we detect 'not same' """
+    for c in cloths:
+        cloth = MC_data['cloths'][c['MC_cloth_id']]
+        vw = get_weights(ob, 'MC_surface_follow', obm=cloth.obm)
+        bool = vw != 0
+        
+        # Get transformed co of each cloth
+        # Get transformed dg of active
+        
+        # need to get the distance off the 
+        #   surface. Might be fastes to
+        #   do foreach_get('normal'
+        #   will have to compare speed. 
+        
+        
+        
+        # find this
+        # checks for 
+    
 
 # precalculated ---------------
 def eliminate_duplicate_pairs(ar):
@@ -407,11 +491,16 @@ def create_instance():
     # drag can be something like air friction
     if 'MC_drag' not in ob.vertex_groups:
         ob.vertex_groups.new(name='MC_drag')
-
+    
+    # surface follow
+    if 'MC_surface_follow' not in ob.vertex_groups:
+        ob.vertex_groups.new(name='MC_surface_follow')
 
     # stuff ---------------
     cloth.obm = get_bmesh(ob)
     cloth.pin = get_weights(ob, 'MC_pin', obm=cloth.obm)[:, nax]
+    cloth.surface_sew = get_weights(ob, 'MC_surface_follow', obm=cloth.obm)
+
 
     if ob.data.is_editmode:
         cloth.obm.verts.layers.deform.verify() # for vertex groups
@@ -498,6 +587,7 @@ def update_groups(cloth, obm=None, geometry=False):
     # vertex groups
     current = np.copy(cloth.pin)
     cloth.pin = get_weights(ob, 'MC_pin', obm=obm)[:, nax]
+    cloth.surface_sew = get_weights(ob, 'MC_surface_follow', obm=cloth.obm)
     if geometry:
         old = current.shape[0]
         new = cloth.pin.shape[0]
@@ -653,6 +743,9 @@ def spring_force(cloth):
         if push != 1:    
             push_springs = move_l < 0
             move_l[push_springs] *= push
+        
+        # !!! here we could square move_l to accentuate bigger stretch
+        # !!! see if it solves better.
         
         # mean method -------------------
         cloth.stretch_array[:] = 0.0
@@ -1299,11 +1392,15 @@ class McPropsObject(bpy.types.PropertyGroup):
     target:\
     bpy.props.PointerProperty(type=bpy.types.Object, description="Use this object as the target for stretch and bend springs", update=cb_target)
 
+    # Forces
     gravity:\
     bpy.props.FloatProperty(name="Gravity", description="Strength of the gravity", default=0.0, min=-1000, max=1000, soft_min= -10, soft_max=10, precision=3)
 
     velocity:\
     bpy.props.FloatProperty(name="Velocity", description="Maintains Velocity", default=0.777, min= -1000, max=1000, soft_min= 0.0, soft_max=1, precision=3)
+
+    wind:\
+    bpy.props.FloatProperty(name="Wind", description="This Really Blows", default=0.0, min= -1000, max=1000, soft_min= -10.0, soft_max=10.0, precision=3)
 
 
     feedback:\
@@ -1318,6 +1415,12 @@ class McPropsObject(bpy.types.PropertyGroup):
 
     push:\
     bpy.props.FloatProperty(name="Push", description="Strength of the push springs", default=1, min=0, max=1, soft_min= -2, soft_max=2, precision=3)
+    
+    # Sewing
+    sew_force:\
+    bpy.props.FloatProperty(name="Sew Force", description="Shrink Sew Edges", default=0.1, min=0, max=1, soft_min= -100, soft_max=100, precision=3)
+    
+
 
 
 
@@ -1378,6 +1481,40 @@ class MCResetToBasisShape(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MCSurfaceFollow(bpy.types.Operator):
+    """Connect points to neares surface"""
+    bl_idname = "object.mc_surface_follow"
+    bl_label = "MC Surface Follow"
+    bl_options = {'REGISTER', 'UNDO'}
+    def execute(self, context):
+        
+        active = bpy.context.object        
+        if active is None:
+            msg = "Must have an active mesh"
+            bpy.context.window_manager.popup_menu(oops, title=msg, icon='ERROR')
+            return
+        
+        if active.type != 'MESH':
+            msg = "Active object must be a mesh"
+            bpy.context.window_manager.popup_menu(oops, title=msg, icon='ERROR')
+            return
+            
+        if not active.data.polygons:
+            msg = "Must have at least one face in active mesh"
+            bpy.context.window_manager.popup_menu(oops, title=msg, icon='ERROR')
+            return
+        
+        cloths = [i for i in bpy.data.objects if (i.MC_props.cloth & i is not active & i.select_get())]        
+        if not cloths:
+            msg = "Must select at least one cloth object and an active object to bind to"
+            bpy.context.window_manager.popup_menu(oops, title=msg, icon='ERROR')
+            return
+        
+        create_surface_follow_data(active, cloths)
+
+        return {'FINISHED'}
+
+
 class MCResetSelectedToBasisShape(bpy.types.Operator):
     """Reset the selected verts to basis shape"""
     bl_idname = "object.mc_reset_selected_to_basis_shape"
@@ -1435,7 +1572,36 @@ class MCApplyForExport(bpy.types.Operator):
 # ============================================================ #
 #                         draw code                            #
 #                                                              #
-class PANEL_PT_modelingClothMain(bpy.types.Panel):
+class PANEL_PT_MC_Master(bpy.types.Panel):
+    """MC Panel"""
+    bl_label = "MC Master Panel"
+    bl_idname = "PANEL_PT_mc_master_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Extended Tools"
+
+    @classmethod
+    def poll(cls, context):
+        ob = bpy.context.object
+        if ob is None:
+            return False
+        
+        if ob.type != 'MESH':
+            if MC_data['recent_object'] is None:
+                return False
+            ob = MC_data['recent_object']
+        return True
+           
+    def __init__(self):
+        ob = bpy.context.object
+        if ob.type != 'MESH':
+            ob = MC_data['recent_object']
+        
+        self.ob = ob
+        self.cloth = ob.MC_props.cloth
+        
+# MAIN PANEL
+class PANEL_PT_modelingClothMain(PANEL_PT_MC_Master, bpy.types.Panel):
     """Modeling Cloth Main"""
     bl_label = "MC Main"
     bl_idname = "PANEL_PT_modeling_cloth_main"
@@ -1449,55 +1615,77 @@ class PANEL_PT_modelingClothMain(bpy.types.Panel):
         col = layout.column(align=True)
         col.prop(sc.MC_props, "kill_duplicator", text="kill_duplicator", icon='DUPLICATE')
         # use current mesh or most recent cloth object if current ob isn't mesh
-        ob = bpy.context.object
-        if ob is not None:
-            mesh = ob.type == "MESH"
-            recent = MC_data['recent_object']
-            if recent is not None:
-                if not mesh:
-                    ob = recent
-                    mesh = True
-                else:
-                    MC_data['recent_object'] = ob
+        ob = self.ob
 
-            cloth = ob.MC_props.cloth
-            if mesh:
-                # if we select a new mesh object we want it to display
+        # if we select a new mesh object we want it to display
 
-                col = layout.column(align=True)
-                # display the name of the object if "cloth" is True
-                #   so we know what object is the recent object
-                recent_name = ''
-                if ob.MC_props.cloth:
-                    recent_name = ob.name
-                col.prop(ob.MC_props, "cloth", text="Cloth " + recent_name, icon='MOD_CLOTH')
-                col.prop(ob.MC_props, "collider", text="Collide", icon='MOD_PHYSICS')
-
-                if cloth:
-                    col.label(text='Update Mode')
-                    col = layout.column(align=True)
-                    #col.scale_y = 1
-                    row = col.row()
-                    row.scale_y = 2
-                    row.prop(ob.MC_props, "animated", text="Animated", icon='PLAY')
-                    row = col.row()
-                    row.scale_y = 2
-                    row.prop(ob.MC_props, "continuous", text="Continuous", icon='FILE_REFRESH')
-                    row = col.row()
-                    row.scale_y = 1
-                    row.prop(sc.MC_props, "delay", text="Delay", icon='SORTTIME')
-                    box = col.box()
-                    #row = col.row()
-                    box.scale_y = 2
-                    box.operator('object.mc_reset_to_basis_shape', text="RESET", icon='RECOVER_LAST')
-                    box.operator('object.mc_reset_selected_to_basis_shape', text="RESET SELECTED", icon='RECOVER_LAST')
-                    col = layout.column(align=True)
-                    col.use_property_decorate = True
-                    col.label(text='Target Object')
-                    col.prop(ob.MC_props, "target", text="", icon='DUPLICATE')
+        col = layout.column(align=True)
+        # display the name of the object if "cloth" is True
+        #   so we know what object is the recent object
+        recent_name = ''
+        if ob.MC_props.cloth:
+            recent_name = ob.name
+        col.prop(ob.MC_props, "cloth", text="Cloth " + recent_name, icon='MOD_CLOTH')
+        col.prop(ob.MC_props, "collider", text="Collide", icon='MOD_PHYSICS')
+        if ob.MC_props.cloth:
+            #if self.mesh:
+            col.label(text='Update Mode')
+            col = layout.column(align=True)
+            #col.scale_y = 1
+            row = col.row()
+            row.scale_y = 2
+            row.prop(ob.MC_props, "animated", text="Animated", icon='PLAY')
+            row = col.row()
+            row.scale_y = 2
+            row.prop(ob.MC_props, "continuous", text="Continuous", icon='FILE_REFRESH')
+            row = col.row()
+            row.scale_y = 1
+            row.prop(sc.MC_props, "delay", text="Delay", icon='SORTTIME')
+            box = col.box()
+            #row = col.row()
+            box.scale_y = 2
+            box.operator('object.mc_reset_to_basis_shape', text="RESET", icon='RECOVER_LAST')
+            box.operator('object.mc_reset_selected_to_basis_shape', text="RESET SELECTED", icon='RECOVER_LAST')
+            col = layout.column(align=True)
+            col.use_property_decorate = True
+            col.label(text='Target Object')
+            col.prop(ob.MC_props, "target", text="", icon='DUPLICATE')
 
 
-class PANEL_PT_modelingClothSettings(bpy.types.Panel):
+# SEWING PANEL
+class PANEL_PT_modelingClothSewing(PANEL_PT_MC_Master, bpy.types.Panel):
+    """Modeling Cloth Settings"""
+    bl_label = "MC Sewing"
+    bl_idname = "PANEL_PT_modeling_cloth_sewing"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Extended Tools"
+
+    def draw(self, context):
+        ob = self.ob
+        cloth = ob.MC_props.cloth
+        if cloth:
+            sc = bpy.context.scene
+            layout = self.layout
+
+            # use current mesh or most recent cloth object if current ob isn't mesh
+            MC_data['recent_object'] = ob
+            col = layout.column(align=True)
+            col.scale_y = 1.5
+            col.label(text='Forces')
+            col.prop(ob.MC_props, "gravity", text="gravity")
+            col.prop(ob.MC_props, "velocity", text="velocity")
+
+            #col.scale_y = 1
+            col = layout.column(align=True)
+            col.prop(ob.MC_props, "iters", text="stretch iterations")
+            col.prop(ob.MC_props, "stretch", text="stretch")
+            col.prop(ob.MC_props, "push", text="push")
+            col.prop(ob.MC_props, "feedback", text="feedback")
+
+
+# SETTINGS PANEL
+class PANEL_PT_modelingClothSettings(PANEL_PT_MC_Master, bpy.types.Panel):
     """Modeling Cloth Settings"""
     bl_label = "MC Settings"
     bl_idname = "PANEL_PT_modeling_cloth_settings"
@@ -1506,35 +1694,27 @@ class PANEL_PT_modelingClothSettings(bpy.types.Panel):
     bl_category = "Extended Tools"
 
     def draw(self, context):
-        sc = bpy.context.scene
-        layout = self.layout
+        ob = self.ob
+        cloth = ob.MC_props.cloth
+        if cloth:
+            sc = bpy.context.scene
+            layout = self.layout
 
-        # use current mesh or most recent cloth object if current ob isn't mesh
-        ob = bpy.context.object
-        if ob is not None:
-            mesh = ob.type == "MESH"
-            recent = MC_data['recent_object']
-            if recent is not None:
-                if not mesh:
-                    ob = recent
-                    mesh = True
-                else:
-                    MC_data['recent_object'] = ob
+            # use current mesh or most recent cloth object if current ob isn't mesh
+            MC_data['recent_object'] = ob
+            col = layout.column(align=True)
+            col.scale_y = 1.5
+            col.label(text='Forces')
+            col.prop(ob.MC_props, "gravity", text="gravity")
+            col.prop(ob.MC_props, "velocity", text="velocity")
 
-            cloth = ob.MC_props.cloth
-            if cloth:
-                col = layout.column(align=True)
-                col.scale_y = 1.5
-                col.label(text='Forces')
-                col.prop(ob.MC_props, "gravity", text="gravity")
-                col.prop(ob.MC_props, "velocity", text="velocity")
+            #col.scale_y = 1
+            col = layout.column(align=True)
+            col.prop(ob.MC_props, "iters", text="stretch iterations")
+            col.prop(ob.MC_props, "stretch", text="stretch")
+            col.prop(ob.MC_props, "push", text="push")
+            col.prop(ob.MC_props, "feedback", text="feedback")
 
-                #col.scale_y = 1
-                col = layout.column(align=True)
-                col.prop(ob.MC_props, "iters", text="stretch iterations")
-                col.prop(ob.MC_props, "stretch", text="stretch")
-                col.prop(ob.MC_props, "push", text="push")
-                col.prop(ob.MC_props, "feedback", text="feedback")
 
 # ^                                                          ^ #
 # ^                     END draw code                        ^ #
