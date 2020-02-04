@@ -1,3 +1,16 @@
+def matrix_from_custom_orientation():
+    """For using custom orientations as a matrix transform"""
+    import bpy
+    from bpy import context
+    import mathutils   
+    #Get the matrix of the transform orientation called 'name'
+    custom_matrix = bpy.context.scene.orientations['name'].matrix
+    #Copy the matrix to resize it from 3x3 matrix to 4x4 matrix
+    custom_matrix_4 = custom_matrix.copy()
+    custom_matrix_4.resize_4x4()
+    #Set the matrix of the active object to match the resized matrix
+    bpy.context.active_object.matrix_world = custom_matrix_4
+
 def verts_in_group(ob, name='Group'):
     """Returns np array of indices for vertices in the group"""
     ob.update_from_editmode() # in case someone has assigned verts in editmode
