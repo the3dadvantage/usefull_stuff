@@ -118,6 +118,22 @@ def apply_shape(ob, modifier_name='Cloth', update_existing_key=False, keep=['Clo
     return key
 
 
+def offset_face_indices(faces=[]):
+    """Sorts the original face vert indices
+    for a new mesh from subset."""
+    # Example: face[n].verts = [[20, 10, 30], [10, 30, 100]]
+    # Converts to [[1, 0, 2], [0, 2, 3]]
+
+    def add(c):
+        c['a'] += 1
+        return c['a']
+
+    flat = np.hstack(faces)
+    idx = np.unique(flat, return_inverse=True)[1]
+    c = {'a': -1}
+    new_idx = [[idx[add(c)] for j in i] for i in faces]
+
+
 # get depsgraph co with various modifiers turned off
 def get_co_with_modifiers(ob, types=[], names=[], include_mesh=False):
     """Get the coordinates of modifiers with
