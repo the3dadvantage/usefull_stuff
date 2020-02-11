@@ -464,6 +464,11 @@ def inside_triangles(tris, points, check=True):
 
     return weights.T, check
 
+
+def get_cloth(ob):
+    """Return the cloth instance from the object"""    
+    return MC_data['cloths'][ob['MC_cloth_id']]
+
 # ^                                                          ^ #
 # ^                 END universal functions                  ^ #
 # ============================================================ #
@@ -622,6 +627,7 @@ def create_surface_follow_data(active, cloths):
 
 # precalculated ---------------
 def eliminate_duplicate_pairs(ar):
+    # Not currently used...
     """Eliminates duplicates and mirror duplicates.
     for example, [1,4], [4,1] or duplicate occurrences of [1,4]
     Returns an Nx2 array."""
@@ -633,14 +639,51 @@ def eliminate_duplicate_pairs(ar):
     return a[index]
 
 
+def virtual_springs(cloth):
+    """Adds spring sets checking if springs
+    are already present using strings.
+    Also stores the set so we can check it
+    if there are changes in geometry."""
+    
+    # when we detect changes in geometry we
+    #   regenerate the springs, then add 
+    #   cloth.virtual_springs to the basic
+    #   array after we check that all the
+    #   verts in the virtual springs are
+    #   still in the mesh.
+    verts = cloth.virtual_spring_verts
+    ed = cloth.basic_set
+        
+    string_spring = [str(e[0]) + str(e[1]) for e in ed]
+    
+    strings = []
+    new_ed = []
+    for v in verts:
+        for j in verts:
+            if j != v:
+                stringy = str(v) + str(j)
+                strings.append(stringy)
+                #if stringy not in string_spring:
+                new_ed.append([v,j])
+    
+    in1d = np.in1d(strings, string_spring)
+    cull_ed = np.array(new_ed)[~in1d]    
+    cloth.virtual_springs = cull_ed # store it for checking when changing geometry
+    cloth.basic_set = np.append(cloth.basic_set, cull_ed, axis=0)
+    cloth.basic_v_fancy = cloth.basic_set[:,0]
+    # would be nice to have a mesh or ui magic to visualise virtual springs
+    # !!! could do a fixed type sew spring the same way !!!
+    # !!! maybe use a vertex group for fixed sewing? !!!
+    # !!! Could also use a separate object for fixed sewing !!!
+    
+    
 def get_springs_2(cloth):
+    """Create index for viewing stretch springs"""
     obm = cloth.obm
     obm.verts.ensure_lookup_table()
     
     TT = time.time()
     ed = []
-    #ed2 = []
-    #st = []
     for v in obm.verts:
         v_set = []
         for f in v.link_faces:
@@ -650,31 +693,15 @@ def get_springs_2(cloth):
                     if stri not in v_set:    
                         ed.append([v.index, vj.index])
                         v_set.append(stri)
-                    
+    
     cloth.basic_set = np.array(ed)
     cloth.basic_v_fancy = cloth.basic_set[:,0]
-    print(cloth.basic_set[:,0])
-    
-    # could test here to see if all the fancy indexing really
-    #   saves time. It might not actually be faster
-    
-                    #st.append(str(v.index) + str(vj.index))
-        #ed2.extend(v_set)
-    print(np.array(ed).shape, "shape from test way")    
-    #stred = np.array(ed, dtype='<U10')
-    #uni = np.unique(st, return_index=True)
-    
-    
-    #ed = np.array(ed, dtype=np.int32)[uni[1]]
-    print(time.time() - TT, "the test way")
-    
-    #print(ed)
-    #print(ed.shape)
     
 
 
 # precalculated ---------------
 def get_springs(cloth, obm=None, debug=False):
+    # Not currently used. Using get_springs_2
     """Creates minimum edges and indexing arrays for spring calculations"""
     if obm is None:
         obm = get_bmesh(cloth.ob)
@@ -694,12 +721,6 @@ def get_springs(cloth, obm=None, debug=False):
     a = np.hstack([i[0] for i in merged1])
     b = np.hstack([i[1] for i in merged1])
     final = np.append(a[nax],b[nax], axis=0).T
-    print(time.time() - TT, "time the old way")
-    
-    
-    #print(final)
-    
-    print(np.array(final).shape, "shape from original springs ++++++++++++++++")
     
     springs = eliminate_duplicate_pairs(final)
 
@@ -828,25 +849,19 @@ def create_instance():
     if ob.data.is_editmode:
         cloth.mode = None
 
-    t = T()
-    cloth.springs, cloth.v_fancy, cloth.e_fancy, cloth.flip = get_springs(cloth)
-    T(t, "time it took to get the springs")
+    #t = T()
+    #cloth.springs, cloth.v_fancy, cloth.e_fancy, cloth.flip = get_springs(cloth)
+    #T(t, "time it took to get the springs")
 
     t = T()
     get_springs_2(cloth)
     T(t, "time it took to get the springs")
 
-
-
     # coordinates and arrays
-    #print(ob.name, '!!!!!!!!!!!!!!!! name!!')
     if ob.data.is_editmode:
         cloth.co = get_co_mode(ob)
     else:
         cloth.co = get_co_shape(ob, 'MC_current')
-
-    # for pinning
-    #cloth.pin_arr = np.copy(cloth.co)
 
     # Allocate arrys
     cloth.select_start = np.copy(cloth.co)
@@ -864,13 +879,11 @@ def create_instance():
     if cloth.target is not None: # if we are doing a two way update we will need to put run the updater here
         same = compare_geometry(ob, cloth.target, cloth.obm, cloth.target_obm)
         if same:
-            cloth.source, cloth.dots = stretch_springs(cloth, cloth.target)
+            cloth.source, cloth.dots = stretch_springs_basic(cloth, cloth.target)
 
     if not same: # there is no matching target or target is None
 
-        cloth.v, cloth.source, cloth.dots = stretch_springs(cloth)
-
-
+        cloth.v, cloth.source, cloth.dots = stretch_springs_basic(cloth)
 
     return cloth
 
@@ -1125,7 +1138,7 @@ def spring_basic(cloth):
         # apply forces ------------------
         move = cv * np.nan_to_num(move_l / cl)[:,None]
         #midx = move#[cloth.e_fancy]
-        #midx *= (cloth.flip * (weights)[:,None])
+        move *= weights[:,None]
         np.add.at(cloth.co, cloth.basic_v_fancy, move)
 
         # apply surface sew for each iteration:
@@ -1170,6 +1183,7 @@ def spring_basic(cloth):
 # ==============================================
 
 # update the cloth ---------------
+# Not used. Replaced by spring_basic
 def spring_force(cloth):
 
     # get properties
@@ -1346,7 +1360,8 @@ def cloth_physics(ob, cloth, collider):
             print("DANGER!!!!!!!!!!!!!!!!!!")
             print("DANGER!!!!!!!!!!!!!!!!!!")
             np.copyto(cloth.pin_arr, cloth.co)
-            cloth.springs, cloth.v_fancy, cloth.e_fancy, cloth.flip = get_springs(cloth, cloth.obm)
+            #cloth.springs, cloth.v_fancy, cloth.e_fancy, cloth.flip = get_springs(cloth, cloth.obm)
+            get_springs_2(cloth)
             cloth.geometry = get_mesh_counts(ob, cloth.obm)
             # cloth.sew_springs = get_sew_springs() # build
             cloth.obm.verts.ensure_lookup_table()
@@ -1357,7 +1372,7 @@ def cloth_physics(ob, cloth, collider):
 
             update_groups(cloth, cloth.obm, True)
             cloth.ob.update_from_editmode()
-
+            cloth.obm.verts.ensure_lookup_table()
         # updating the mesh coords -----------------@@
         # detects user changes to the mesh like grabbing verts
         cloth.co = np.array([v.co for v in cloth.obm.verts])
@@ -1379,21 +1394,15 @@ def cloth_physics(ob, cloth, collider):
         """======================================"""
 
         # write vertex coordinates back to bmesh
-        #for i in range(co.shape[0]):
-            #cloth.obm.verts[i].co = co[i]
-        #vco_list = [v for v in cloth.obm.verts]
 
-        cloth.obm.verts.ensure_lookup_table()
-        [obm_co(cloth.obm.verts, cloth.co, i) for i in range(cloth.co.shape[0])]
-        # not sure if calling the function in list comp is faster
-        #   than loop. Need to check this.
-
+        for i in range(cloth.co.shape[0]):
+            cloth.obm.verts[i].co = cloth.co[i]
+                    
         bmesh.update_edit_mesh(ob.data)
         if False: # (there might be a much faster way by writing to a copy mesh then loading copy to obm)
             bmesh.ops.object_load_bmesh(bm, scene, object)
         # -----------------------------------------@@
         return
-
 
     if cloth.mode is None:
         # switched out of edit mode
@@ -1649,25 +1658,21 @@ def cb_collider(self, context):
 def cb_cloth(self, context):
     """Set up object as cloth"""
 
-    # set the recent object for keeping settings active when selecting empties
     ob = bpy.context.object
-    
-    try:
-        ob = MC_data['recent_object']
-    except:
-        print("recent object was not an object or None")
-        pass
-    
-    if ob is None:
-        ob = bpy.context.object
 
+    # set the recent object for keeping settings active when selecting empties
+    recent = MC_data['recent_object']
+        
     if ob.type != "MESH":
-        self['cloth'] = False
+        if recent is not None:
+            ob = recent    
+        else:    
+            self['cloth'] = False
 
-        # Report Error
-        msg = "Must be a mesh. Non-mesh objects make terrible shirts."
-        bpy.context.window_manager.popup_menu(oops, title=msg, icon='ERROR')
-        return
+            # Report Error
+            msg = "Must be a mesh. Non-mesh objects make terrible shirts."
+            bpy.context.window_manager.popup_menu(oops, title=msg, icon='ERROR')
+            return
 
     if len(ob.data.polygons) < 1:
         self['cloth'] = False
@@ -1685,18 +1690,7 @@ def cb_cloth(self, context):
         index = ob.data.shape_keys.key_blocks.find('MC_current')
         ob.active_shape_key_index = index
 
-#        # vertex groups
-#        if 'MC_pin' not in ob.vertex_groups:
-#            ob.vertex_groups.new(name='MC_pin')
-#        pin = get_weights(ob, 'MC_pin', obm=None)
-#        pin_arr = np.zeros(pin.shape[0]*3, dtype=np.float32)
-#        pin_arr.shape = (pin.shape[0], 3)
-
         cloth = create_instance()
-#        #cloth.pin = pin[:, nax]
-#        #cloth.pin_arr = pin_arr
-        #update_groups(cloth)
-
 
         # recent_object allows cloth object in ui
         #   when selecting empties such as for pinning.
@@ -1730,9 +1724,15 @@ def cb_cloth(self, context):
 def cb_continuous(self, context):
     """Turn continuous update on or off"""
     install_handler(continuous=True)
+    ob = bpy.context.object
 
     # updates groups when we toggle "Continuous"
-    ob = bpy.context.object
+    recent = MC_data['recent_object']
+    if recent is not None:
+        if ob.type != 'MESH':
+            ob = recent
+        
+        
     cloth = MC_data["cloths"][ob['MC_cloth_id']]
     
     """need to test this and fix if needed. Test adding geometry while paused.
@@ -2078,6 +2078,25 @@ class MCResetSelectedToBasisShape(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MCCreateVirtualSprings(bpy.types.Operator):
+    """Create Virtual Springs Between Selected Verts"""
+    bl_idname = "object.mc_create_virtual_springs"
+    bl_label = "MC Create Virtual Springs"
+    bl_options = {'REGISTER', 'UNDO'}
+    def execute(self, context):
+        ob = MC_data['recent_object']
+        if ob is None:
+            ob = bpy.context.object
+
+        cloth = get_cloth(ob)
+        obm = cloth.obm
+        verts = np.array([v.index for v in obm.verts if v.select])
+        cloth.virtual_spring_verts = verts
+        virtual_springs(cloth)
+        
+        return {'FINISHED'}
+
+
 class MCApplyForExport(bpy.types.Operator):
     # !!! Not Finished !!!!!!
     """Apply cloth effects to mesh for export."""
@@ -2211,8 +2230,9 @@ class PANEL_PT_modelingClothSewing(PANEL_PT_MC_Master, bpy.types.Panel):
 
             box = col.box()
             box.scale_y = 2
-            box.operator('object.mc_create_sew_lines', text="Create Sew Lines", icon='ALIGN_JUSTIFY')
-            box.operator('object.mc_sew_to_surface', text="Surface Sewing", icon='OUTLINER_DATA_SURFACE')
+            box.operator('object.mc_create_virtual_springs', text="Virtual Springs", icon='AUTOMERGE_ON')
+            box.operator('object.mc_create_sew_lines', text="Sew Lines", icon='AUTOMERGE_OFF')
+            box.operator('object.mc_sew_to_surface', text="Surface Sewing", icon='MOD_SMOOTH')
 
             return
         sc = bpy.context.scene
@@ -2332,6 +2352,7 @@ classes = (
     MCSurfaceFollow,
     MCCreateSewLines,
     MCSewToSurface,
+    MCCreateVirtualSprings,
     PANEL_PT_modelingClothMain,
     PANEL_PT_modelingClothSettings,
     PANEL_PT_modelingClothSewing,
