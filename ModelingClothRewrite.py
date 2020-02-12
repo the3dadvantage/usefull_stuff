@@ -5,7 +5,6 @@
 # pause button using space bar or something with modal grab
 # cache file option
 # awesome sew doesn't care how many verts (target a location based on a percentage of the edge)
-# run cloth in edit mode????
 # Could I pull the normals off a normal map and add them to the bend springs for adding wrinkles?
 # For adding wrinkles maybe I can come up with a clever way to put them into the bend springs.
 # Could even create a paint modal tool that expands the source where the user paints to create custom wrinkles.
@@ -62,7 +61,8 @@ def reload():
     """!! for development !! Resets everything"""
     # when this is registered as an addon I will want
     #   to recaluclate these objects not set prop to false
-    # set all props to false:
+    
+    # Set all props to False:
     reload_props = ['continuous', 'collider', 'animated', 'cloth']
     if 'MC_props' in dir(bpy.types.Object):
         for i in reload_props:
@@ -429,6 +429,19 @@ def get_weights(ob, name, obm=None):
             arr[idx] = w
 
     return arr
+
+
+# universal ---------------
+def slice_springs(idx, co):
+    pass
+    
+    
+def bend_springs():
+    #is there a way to get bend relationships from 
+    #just the bais springs...
+    #Or could I do something like virtual springs
+    #but for bend sets...
+    pass    
 
 
 # universal ---------------
@@ -812,6 +825,7 @@ def create_instance():
     cloth.obm = get_bmesh(ob)
     cloth.pin = get_weights(ob, 'MC_pin', obm=cloth.obm)[:, nax]
     cloth.surface_vgroup_weights = get_weights(ob, 'MC_surface_follow', obm=cloth.obm)[:, nax]
+    cloth.update_lookup = False
 
     # surface follow data ------------------------------------------
     cloth.surface_tridex = None         # (index of tris in surface object)
@@ -1329,13 +1343,18 @@ def cloth_physics(ob, cloth, collider):
         # if we switch to a different shape key in edit mode:
         index = ob.data.shape_keys.key_blocks.find('MC_current')
         if ob.active_shape_key_index != index:
+            cloth.update_lookup = True
             return
-
+        
         # bmesh gets removed when someone clicks on MC_current shape"
         try:
             cloth.obm.verts
         except:
             cloth.obm = get_bmesh(ob)
+
+        if cloth.update_lookup:
+            cloth.obm.verts.ensure_lookup_table()
+            cloth.update_lookup = False
 
         # If we switched to edit mode or started in edit mode:
         if cloth.mode == 1 or cloth.undo:
@@ -1383,10 +1402,6 @@ def cloth_physics(ob, cloth, collider):
         """======================================"""
         # FORCES FORCES FORCES FORCES FORCES
 
-        # add some forces
-        #cloth.co += grav
-        if False:
-            spring_force(cloth)
         
         spring_basic(cloth)
         # FORCES FORCES FORCES FORCES FORCES
@@ -1486,7 +1501,12 @@ def undo_frustration(scene):
         # update for meshes in edit mode
         cloth.undo = True
         cloth.target_undo = True
-
+        try:
+            cloth.obm.verts
+        except:
+            cloth.obm = get_bmesh(cloth.ob)
+        
+        
         if not detect_changes(cloth.geometry, cloth.obm)[0]:
             cloth.springs, cloth.v_fancy, cloth.e_fancy, cloth.flip = get_springs(cloth)
 
@@ -1946,14 +1966,13 @@ class MCResetToBasisShape(bpy.types.Operator):
         ob = MC_data['recent_object']
         if ob is None:
             ob = bpy.context.object
-
-        mode = ob.mode
+        cloth = get_cloth(ob)
         if ob.data.is_editmode:
-            bpy.ops.object.mode_set(mode='OBJECT')
+            Basis = cloth.obm.verts.layers.shape["Basis"]
+            for v in cloth.obm.verts:
+                v.co = v[Basis]
 
         reset_shapes(ob)
-        cloth = MC_data['cloths'][ob['MC_cloth_id']]
-        
         cloth.co = get_co_shape(ob, "Basis")
         cloth.velocity[:] = 0
         cloth.pin_arr[:] = cloth.co
@@ -1962,8 +1981,37 @@ class MCResetToBasisShape(bpy.types.Operator):
         
         current_key = ob.data.shape_keys.key_blocks['MC_current'] 
         current_key.data.foreach_set('co', cloth.co.ravel())
-        bpy.ops.object.mode_set(mode=mode)
         ob.data.update()
+        return {'FINISHED'}
+
+
+class MCResetSelectedToBasisShape(bpy.types.Operator):
+    """Reset the selected verts to basis shape"""
+    bl_idname = "object.mc_reset_selected_to_basis_shape"
+    bl_label = "MC Reset Selected To Basis Shape"
+    bl_options = {'REGISTER', 'UNDO'}
+    def execute(self, context):
+        ob = MC_data['recent_object']
+        if ob is None:
+            ob = bpy.context.object
+        cloth = get_cloth(ob)
+        if ob.data.is_editmode:
+            Basis = cloth.obm.verts.layers.shape["Basis"]
+            for v in cloth.obm.verts:
+                if v.select:
+                    v.co = v[Basis]
+
+        reset_shapes(ob)
+        bco = get_co_shape(ob, "Basis")
+        cloth.co[cloth.selected] = bco[cloth.selected]
+        cloth.pin_arr[cloth.selected] = bco[cloth.selected]
+        cloth.select_start[cloth.selected] = bco[cloth.selected]
+        cloth.feedback[cloth.selected] = 0
+        
+        bco[~cloth.selected] = cloth.co[~cloth.selected]
+        ob.data.shape_keys.key_blocks['MC_current'].data.foreach_set('co', bco.ravel())
+        ob.data.update()
+
         return {'FINISHED'}
 
 
@@ -2045,36 +2093,6 @@ class MCSewToSurface(bpy.types.Operator):
 
         #bpy.ops.object.mode_set(mode=mode)
         #ob.data.update()
-        return {'FINISHED'}
-
-
-class MCResetSelectedToBasisShape(bpy.types.Operator):
-    """Reset the selected verts to basis shape"""
-    bl_idname = "object.mc_reset_selected_to_basis_shape"
-    bl_label = "MC Reset Selected To Basis Shape"
-    bl_options = {'REGISTER', 'UNDO'}
-    def execute(self, context):
-        ob = MC_data['recent_object']
-        if ob is None:
-            ob = bpy.context.object
-
-        mode = ob.mode
-        if ob.data.is_editmode:
-            bpy.ops.object.mode_set(mode='OBJECT')
-
-        cloth = MC_data['cloths'][ob['MC_cloth_id']]
-        reset_shapes(ob)
-        bco = get_co_shape(ob, "Basis")
-        cloth.co[cloth.selected] = bco[cloth.selected]
-        cloth.pin_arr[cloth.selected] = bco[cloth.selected]
-        cloth.select_start[cloth.selected] = bco[cloth.selected]
-        cloth.feedback[cloth.selected] = 0
-        
-        bco[~cloth.selected] = cloth.co[~cloth.selected]
-        ob.data.shape_keys.key_blocks['MC_current'].data.foreach_set('co', bco.ravel())
-
-        bpy.ops.object.mode_set(mode=mode)
-        ob.data.update()
         return {'FINISHED'}
 
 
