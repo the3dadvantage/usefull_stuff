@@ -1,3 +1,32 @@
+def apply_shape(ob, modifier_name='Cloth', update_existing_key=False, keep=['Cloth'], key_name='Cloth'):
+    """Apply modifier as shape without using bpy.ops.
+    Does not apply modifiers.
+    Mutes modifiers not listed in 'keep.'
+    Using update allows writing to an existing shape_key."""
+
+    def turn_off_modifier(modifier, on_off=False):
+        modifier.show_viewport = on_off
+
+    mod_states = [mod.show_viewport for mod in ob.modifiers]
+    [turn_off_modifier(mod, False) for mod in ob.modifiers if mod.name not in keep]
+
+    dg = bpy.context.evaluated_depsgraph_get()
+    proxy = ob.evaluated_get(dg)
+    co = get_co(proxy)
+
+    if update_existing_key:
+        key = ob.data.shape_keys.key_blocks[key_name]
+    else:
+        key = new_shape_key(ob, name=key_name, arr=None, value=0)
+
+    key.data.foreach_set('co', co.ravel())
+
+    for i, j in zip(mod_states, ob.modifiers):
+        j.show_viewport = i
+
+    return key
+
+
 def matrix_from_custom_orientation():
     """For using custom orientations as a matrix transform"""
     import bpy
