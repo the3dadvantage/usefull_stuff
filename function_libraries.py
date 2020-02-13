@@ -40,6 +40,7 @@ def matrix_from_custom_orientation():
     #Set the matrix of the active object to match the resized matrix
     bpy.context.active_object.matrix_world = custom_matrix_4
 
+    
 def verts_in_group(ob, name='Group'):
     """Returns np array of indices for vertices in the group"""
     ob.update_from_editmode() # in case someone has assigned verts in editmode
@@ -100,7 +101,6 @@ def get_co(ob):
     return co
 
 
-
 def new_shape_key(ob, name, arr=None, value=1):
     """Create a new shape key, set it's coordinates
     and set it's value"""
@@ -118,33 +118,40 @@ def get_verts_in_group(ob, name):
     return np.array(vg)
 
 
-def apply_shape(ob, modifier_name='Cloth', update_existing_key=False, keep=['Cloth'], key_name='Cloth'):
-    """Apply modifier as shape without using bpy.ops.
-    Does not apply modifiers.
-    Mutes modifiers not listed in 'keep.'
-    Using update allows writing to an existing shape_key."""
+# -------- group debug ----------------#
+def new_shape_key(ob, name, arr=None, value=1):
+    """Create a new shape key, set it's coordinates
+    and set it's value"""
+    new_key = ob.shape_key_add(name=name)
+    new_key.value = value
+    if arr is not None:
+        new_key.data.foreach_set('co', arr.ravel())
+    return new_key
 
-    def turn_off_modifier(modifier, on_off=False):
-        modifier.show_viewport = on_off
+# -------- group debug ----------------#
+def link_mesh(verts, edges=[], faces=[], name='!!! Debug Mesh !!!'):
+    """Generate and link a new object from pydata"""
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(verts, edges, faces)  
+    mesh.update()
+    mesh_ob = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(mesh_ob)
+    return mesh_ob
 
-    mod_states = [mod.show_viewport for mod in ob.modifiers]
-    [turn_off_modifier(mod, False) for mod in ob.modifiers if mod.name not in keep]
+# -------- group debug ----------------#
+def create_debug_mesh(numpy_coords=[np.array([[1,2,3]]), np.array([[4,5,6]])],
+    shape_keys=['Basis', 'key_1']):
+    """Use a list of sets of numpy coords and matching list of shape key names.
+    Creates a mesh point cloud with shape keys for each numpy coords set.
+    !!! Adds this objet to the blend file !!!"""    
+    key_count = len(shape_keys)
+    ob = link_mesh(numpy_coords[0])
+    keys = ob.data.shape_keys
 
-    dg = bpy.context.evaluated_depsgraph_get()
-    proxy = ob.evaluated_get(dg)
-    co = get_co(proxy)
-
-    if update_existing_key:
-        key = ob.data.shape_keys.key_blocks[key_name]
-    else:
-        key = new_shape_key(ob, name=key_name, arr=None, value=0)
-
-    key.data.foreach_set('co', co.ravel())
-
-    for i, j in zip(mod_states, ob.modifiers):
-        j.show_viewport = i
-
-    return key
+    for i in range(key_count):
+        new_shape_key(ob, shape_keys[i], numpy_coords[i], value=0)
+        
+    ob.data.update()
 
 
 def offset_face_indices(faces=[]):
