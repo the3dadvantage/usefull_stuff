@@ -8,6 +8,20 @@
 #   Might be able to check which modifiers have the "apply as shape" option.
 #   Blender might have already sorted mods that change vertex counts in this way
 
+def soft_grab(cloth):
+    """
+    uses various falloff curves to grab points in the cloth.
+    As the size of the area increases the points around the selection are
+    expanded. The distance along the surface is then measured to apply grab
+    motion with the appropriate level of force/falloff for the distance from the selected point.
+    Needs to work with hooks such that each hook can have a falloff setting. This way
+    You can animate hooks to behave more like fingers pusing or pulling the cloth
+    instead of just a single point or a selection area behaving as if rigid. 
+    """
+    
+
+    
+    
 
 def apply_shape(ob, modifier_name='Cloth', update_existing_key=False, keep=['Cloth'], key_name='Cloth'):
     """Apply modifier as shape without using bpy.ops.
