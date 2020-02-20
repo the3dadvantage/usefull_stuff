@@ -1,3 +1,98 @@
+def connect_panels(self, s_norm_val=1.0, offset_steps=0, correct_rotation=True, reverse=False):
+    """Offset steps is an int that allows backing up or moving forward
+    the given number of edges.
+    correct_rotation checks that the two arrays are paired correctly.
+    reverse flips the direction of both arrays."""
+    
+    #==========================================
+    if False:
+        Bobj = self.garment.Bobj
+        left_zipper_vert_ptrs = self.left_panel.get_connection_bmesh_vert_ptrs()
+        right_zipper_vert_ptrs = self.right_panel.get_connection_bmesh_vert_ptrs()
+    
+    Bobj = bpy.context.object
+    left_zipper_vert_ptrs = np.arange(48, 60)
+    right_zipper_vert_ptrs = np.arange(36, 48)
+    #==========================================
+
+
+    if correct_rotation:
+        # If first vert in left should pair with last vert in right
+        # or just assume we need to correct: right_zipper_vert_ptrs = right_zipper_vert_ptrs[::-1]
+        v_first_l = Bobj.data.vertices[left_zipper_vert_ptrs[0]].co
+        v_first_r = Bobj.data.vertices[right_zipper_vert_ptrs[0]].co
+        v_last_r = Bobj.data.vertices[right_zipper_vert_ptrs[-1]].co
+        vec1 = v_first_l - v_first_r
+        vec2 = v_first_l - v_last_r
+        l1 = vec1 @ vec1
+        l2 = vec2 @ vec2
+        # print(l2, l1,"are we there yet???")
+
+        if l2 < l1:
+
+            right_zipper_vert_ptrs = right_zipper_vert_ptrs[::-1]
+
+    if reverse:
+        right_zipper_vert_ptrs = right_zipper_vert_ptrs[::-1]
+        left_zipper_vert_ptrs = left_zipper_vert_ptrs[::-1]
+
+    obm = get_bmesh(Bobj)
+    obm.verts.ensure_lookup_table()
+
+    # get the total length
+
+    co = np.array([obm.verts[v].co for v in left_zipper_vert_ptrs])
+    vecs = co[1:] - co[:-1]
+    l = np.sqrt(np.einsum("ij ,ij->i", vecs, vecs))
+    sums = np.cumsum(np.nan_to_num(l/np.sum(l)))
+
+    bool = s_norm_val < sums
+    indexer = np.where(bool)[0]
+    removing = False
+
+    # print(np.abs(offset_steps), bool.shape[0])
+
+    stop = None
+    if indexer.shape[0] == 0:
+        stop = -1 # fill them all
+        if offset_steps < 0:
+            if np.abs(offset_steps) <= bool.shape[0]:
+                stop = left_zipper_vert_ptrs[offset_steps -1]
+            else:
+                removing =True
+    else:
+        with_offset = indexer[0] + offset_steps
+        set_stop = True
+
+        if with_offset > indexer[-1]:
+            stop = -1
+            set_stop = False
+        if with_offset < 0:
+            removing = True
+            set_stop = False
+        if set_stop:
+            stop = left_zipper_vert_ptrs[with_offset]
+
+    if np.all(bool):
+        removing = True
+    for v1, v2 in zip(left_zipper_vert_ptrs, right_zipper_vert_ptrs):
+        le = [e for e in obm.verts[v1].link_edges if e.other_vert(obm.verts[v1]).index == v2]
+        existing = len(le) == 1
+
+        if (removing & existing):
+            obm.edges.remove(le[0])
+
+        if not existing:
+            if not removing:
+                obm.edges.new([obm.verts[v1],obm.verts[v2]])
+
+        if v1 == stop:
+            removing = True
+            
+    obm.to_mesh(Bobj.data)
+    Bobj.data.update()            
+
+
 def apply_shape(ob, modifier_name='Cloth', update_existing_key=False, keep=['Cloth'], key_name='Cloth'):
     """Apply modifier as shape without using bpy.ops.
     Does not apply modifiers.
