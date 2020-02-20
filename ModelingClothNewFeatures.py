@@ -1,3 +1,37 @@
+""" New Features: """
+# pause button using space bar or something with modal grab
+# cache file option
+# awesome sew doesn't care how many verts (target a location based on a percentage of the edge)
+# Could I pull the normals off a normal map and add them to the bend springs for adding wrinkles?
+# For adding wrinkles maybe I can come up with a clever way to put them into the bend springs.
+# Could even create a paint modal tool that expands the source where the user paints to create custom wrinkles.
+#   Wrinkle brush could take into account stroke direction, or could grow in all directions.
+#   Crease brush would be different making wrinkles more like what you would need to iron out.
+
+# could have a button to switch modes from animate to model. Model mode would turn down velocity and such.
+#   could even have stored user settings
+
+
+# Target:
+# Could make the cloth always read from the source shape key
+#   and just update target changes to the source shape.
+
+# Bugs (not bunny)
+# Don't currently have a way to update settings on duplicated objects.
+#   !! could load a separate timer that both updates cloth objects when
+#       loading a saved file and updates duplicates that have cloth properties
+#   I think it would load whenever blender reopens if the module is registered
+#   I'll have to see if I need to regen springs or if the global variable is overwritten every time
+
+
+""" create my own pin function that writes to the vertex group
+    so that I don't have to pop in and out of edit mode """
+
+""" create my own button to switch between source and current """
+
+""" can't currently run more than one object at a time """
+
+
 # -------------------------------- START save states
 # Save current state will let you create a shape key for each time you like your cloth settings.
 # It will need to respect armature or other deforms so we'll have to think about the modifier stack and so on.
