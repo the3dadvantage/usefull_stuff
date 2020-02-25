@@ -1,3 +1,29 @@
+def cross_from_tris(tris):
+    origins = tris[:, 0]
+    vecs = tris[:, 1:] - origins[:, nax]
+    cross = np.cross(vecs[:, 0], vecs[:, 1])
+    return cross
+
+
+def distance_along_normal(tris, points):
+    """Return the distance along the cross
+    product and the distance along normalized
+    cross product"""
+    origins = tris[:, 0]
+    cross_vecs = tris[:, 1:] - origins[:, nax]    
+    v2 = points - origins
+    
+    cross = np.cross(cross_vecs[:,0], cross_vecs[:,1])
+    d_v2_c = np.einsum('ij,ij->i', v2, cross)
+    d_v2_v2 = np.einsum('ij,ij->i', cross, cross) 
+    div = d_v2_c / d_v2_v2        
+
+    U_cross = cross / np.sqrt(d_v2_v2)[:, None]
+    U_d = np.einsum('ij,ij->i', v2, U_cross)
+        
+    return div, U_d# for normalized
+
+
 def connect_panels(self, s_norm_val=1.0, offset_steps=0, correct_rotation=True, reverse=False):
     """Offset steps is an int that allows backing up or moving forward
     the given number of edges.
