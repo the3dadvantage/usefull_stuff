@@ -1,39 +1,6 @@
 
 
 
-""" New Features: """
-# pause button using space bar or something with modal grab
-# cache file option
-# awesome sew doesn't care how many verts (target a location based on a percentage of the edge)
-# Could I pull the normals off a normal map and add them to the bend springs for adding wrinkles?
-# For adding wrinkles maybe I can come up with a clever way to put them into the bend springs.
-# Could even create a paint modal tool that expands the source where the user paints to create custom wrinkles.
-#   Wrinkle brush could take into account stroke direction, or could grow in all directions.
-#   Crease brush would be different making wrinkles more like what you would need to iron out.
-
-# could have a button to switch modes from animate to model. Model mode would turn down velocity and such.
-#   could even have stored user settings
-
-
-# Target:
-# Could make the cloth always read from the source shape key
-#   and just update target changes to the source shape.
-
-# Bugs (not bunny)
-# Don't currently have a way to update settings on duplicated objects.
-#   !! could load a separate timer that both updates cloth objects when
-#       loading a saved file and updates duplicates that have cloth properties
-#   I think it would load whenever blender reopens if the module is registered
-#   I'll have to see if I need to regen springs or if the global variable is overwritten every time
-
-
-""" create my own pin function that writes to the vertex group
-    so that I don't have to pop in and out of edit mode """
-
-""" create my own button to switch between source and current """
-
-""" can't currently run more than one object at a time """
-
 
 import bpy
 from bpy.ops import op_as_string
@@ -106,10 +73,18 @@ def T(type=1, message=''):
 #                                                              #
 
 def get_normals_from_tris(tris):
-    vecs = tris[:, :2] - tris[:, -1][:, nax]
+    origins = tris[:, 0]
+    vecs = tris[:, 1:] - origins[:, nax]
     cross = np.cross(vecs[:, 0], vecs[:, 1])
     mag = np.sqrt(np.einsum("ij ,ij->i", cross, cross))[:, nax]
     return np.nan_to_num(cross/mag)    
+
+
+def cross_from_tris(tris):
+    origins = tris[:, 0]
+    vecs = tris[:, 1:] - origins[:, nax]
+    cross = np.cross(vecs[:, 0], vecs[:, 1])
+    return cross
     
 
 def apply_rotation(object, normals):
@@ -214,12 +189,8 @@ def mesh_from_selection(ob, name='name'):
     obm.faces.ensure_lookup_table()
     faces = [[v.index for v in f.verts] for f in obm.faces if f.select]
     if len(faces) == 0:
-        print("there were no faces!!!!!")
-        print("there were no faces!!!!!")
-        print("there were no faces!!!!!")
-        print("there were no faces!!!!!")
+        print("No selected faces in mesh_from_selection")
         return # no faces
-
     
     obm.verts.ensure_lookup_table()
     verts = [i.co for i in obm.verts if i.select]        
@@ -304,7 +275,7 @@ def Nx3(ob):
 
 
 # universal ---------------
-def get_co_mode(ob):
+def get_co_mode(ob=None):
     """Edit or object mode"""
     if ob is None: # cloth.target object might be None
         return None
@@ -328,6 +299,7 @@ def compare_geometry(ob1, ob2, obm1=None, obm2=None, all=False):
     #   and faces must match.
     def get_counts(obm):
         v_count = len([v for v in obm.verts if len(v.link_faces) > 0])
+        #v_count = len(obm.verts) # not sure if I need to separate verts...
         e_count = len(obm.edges)
         f_count = len(obm.faces)
         if all:
@@ -438,15 +410,45 @@ def slice_springs(idx, co):
     
 def bend_springs():
     #is there a way to get bend relationships from 
-    #just the bais springs...
+    #just the basis springs...
     #Or could I do something like virtual springs
     #but for bend sets...
     pass    
 
 
-# universal ---------------
-def inside_triangles(tris, points, check=True):
+def box_bary_weights(poly, point, vals=[]):
+    """Get values to plot points from tris
+    or return the new plotted value."""
+    # note: could use a lot of add.at/subtract.at and
+    #   obscenely complex indexing to do bend springs
+    #   between n-gons. It would be a riot!
+    print(poly[:,2])
+    if vals: # two scalar values
+        ba = poly[1] - poly[0]
+        ca = poly[2] - poly[0]
+        v1, v2 = vals[0], vals[1]
+        plot = poly[0] + (((ba * v1) + (ca * v2)) * .5)
+        #plot = poly[0]# + (((ba * v1) + (ca * v2)) * .5)
+        print(v1, v2, " v1 and v2 ")
+        return plot
+
+    pa = point - poly[0]
+    ba = poly[1] - poly[0]
+    ca = poly[2] - poly[0]
     
+    print(pa, ba, "pa and ba")
+    v1 = np.nan_to_num(pa / ba)
+    v2 = np.nan_to_num(pa / ca)
+    print(v1[2],v2[2])
+    return [v1, v2]
+
+
+# universal ---------------
+def inside_triangles(tris, points, check=True, surface_offset=False, cloth=None):
+    """Can check inside triangle.
+    Can find barycentric weights for triangles.
+    Can find multiplier for distance off surface
+        from non-unit cross product."""
     origins = tris[:, 0]
     cross_vecs = tris[:, 1:] - origins[:, nax]    
     v2 = points - origins
@@ -466,9 +468,21 @@ def inside_triangles(tris, points, check=True):
     u = (d11 * d02 - d01 * d12) * div
     v = (d00 * d12 - d01 * d02) * div
     
-    weights = np.array([1 - (u+v), u, v, ])
+    weights = np.array([1 - (u+v), u, v, ]).T
+    if not check | surface_offset:
+        return weights
+    
     if not check:
-        return weights.T
+        cross = np.cross(cross_vecs[:,0], cross_vecs[:,1])
+        d_v2_c = np.einsum('ij,ij->i', v2, cross)
+        d_v2_v2 = np.einsum('ij,ij->i', cross, cross) 
+        div = d_v2_c / d_v2_v2        
+
+        U_cross = cross / np.sqrt(d_v2_v2)[:, None]
+        U_d = np.einsum('ij,ij->i', v2, U_cross)
+        
+        
+        return weights, div, U_d# for normalized
     
     check = np.all(weights > 0, axis=0)
     # check if bitwise is faster when using lots of tris
@@ -523,10 +537,7 @@ def closest_point_mesh(obm, ob, idx, target):
             empties = False
             if empties:    
                 bpy.ops.object.empty_add(location=target.matrix_world @ loc)
-            #print(target.name, (v2 - v1).length)
 
-
-            #print(face_index)
     print("need to create dtypes for these array below")
     return np.array(locs), np.array(faces), np.array(norms), np.array(cos)
 
@@ -544,6 +555,92 @@ def get_tridex(ob, tobm=None):
         tobm.free()
     return tridex
 
+
+def get_tridex_2(ob): # faster than get_tridex()
+    """Return an index for viewing the
+    verts as triangles using a mesh and
+    foreach_get""" 
+    if ob.data.is_editmode:    
+        ob.update_from_editmode()
+    tobm = bmesh.new()
+    tobm.from_mesh(ob.data)
+    bmesh.ops.triangulate(tobm, faces=tobm.faces[:])
+    me = bpy.data.meshes.new('tris')
+    tobm.to_mesh(me)
+    p_count = len(me.polygons)
+    tridex = np.empty(p_count * 3, dtype=np.int32)
+    me.polygons.foreach_get('vertices', tridex)
+    tridex.shape = (p_count, 3)    
+    
+    # clear unused tri mesh
+    bpy.data.meshes.remove(me)
+    
+    return tridex, tobm
+
+
+def get_bend_sets(cloth):
+    """Each edge with two faces makes a bend edge.
+    The mesh is triangluated so the tip of each triangle
+    whose base is the edge is moved like a hinge
+    around the bend edge."""
+    
+    ob = cloth.ob
+    tridex, obm = get_tridex_2(ob)
+    obm.edges.ensure_lookup_table()
+    T = time.time()
+    bend_data = np.array([[e.verts[0].index, e.verts[1].index, e.index] for e in obm.edges if len(e.link_faces) == 2], dtype=np.int32)
+    if bend_data.shape[0] == 0:
+        cloth.bend_data = None
+        return
+    bend_edges = bend_data[:, :2]
+    ed_idx = bend_data[:, -1:].ravel()    
+
+    lf = [obm.edges[e].link_faces for e in ed_idx]
+    fidx = np.array([[i[0].index, i[1].index] for i in lf])
+    
+    c = tridex[fidx.ravel()]
+    a = bend_edges.ravel()[:, None]
+    b = bend_edges[:, ::-1].ravel()[:, None]
+    
+    bool1 = a == c
+    bool2 = b == c
+    
+    tri_tips = c[~(bool1 | bool2)]
+    # switch tri_tips so the tip pairs with the tri
+    #   on the opposite side of the edge.
+    shape = tri_tips.shape
+    tri_tips.shape = (shape[0]//2, 2)
+    tri_tips = tri_tips[:,::-1].ravel()
+
+    # write to class instance
+    cloth.tridex = tridex
+    cloth.bend_ed_idx = ed_idx
+    cloth.bend_edges = bend_edges
+    cloth.bend_tri_tips = tri_tips
+    cloth.bend_tris = c
+    obm.free()
+
+    # can be dynamic
+    bary_bend_springs(cloth)
+    cloth.bend_tri_tip_array = np.zeros(len(cloth.ob.data.vertices), dtype=np.float32)#[:, None]
+
+
+def bary_bend_springs(cloth):
+    """Dynamic portion of bend springs
+    (as opposed to index groups)"""
+    co = get_co_shape(cloth.ob, key='MC_source')
+    tris = co[cloth.bend_tris]
+    points = co[cloth.bend_tri_tips]
+    weights, surface_offset, U_d = inside_triangles(tris, points, check=False, surface_offset=True, cloth=cloth)
+    cloth.bend_weights = weights[:,:,None]
+    cloth.bend_surface_offset = surface_offset[:, None]
+    cloth.bend_U_d = U_d
+    print('we are running bary weight update')
+    print('we are running bary weight update')
+    print('we are running bary weight update')
+    print('we are running bary weight update')
+    print('we are running bary weight update')
+    
 
 # precalculated ---------------
 def create_surface_follow_data(active, cloths):
@@ -766,13 +863,6 @@ def get_springs(cloth, obm=None, debug=False):
     return springs, v_fancy, e_fancy, np.array(flip)[:, nax]
 
 
-# precalculated --------------------
-def bary_bend_springs(ob):
-    #One edge segment. 
-    pass
-
-
-
 # ^                                                          ^ #
 # ^                 END precalculated data                   ^ #
 # ============================================================ #
@@ -808,6 +898,16 @@ def create_instance():
     cloth.dg = bpy.context.evaluated_depsgraph_get()
     ob = bpy.context.object
     cloth.ob = ob
+    
+    if True:
+        # testng ----------------
+        # testng ----------------
+
+        cloth.red = bpy.data.objects['red']
+        cloth.green = bpy.data.objects['green']
+        
+        # testng ----------------
+        # testng ----------------
 
     # check for groups:
     if 'MC_pin' not in ob.vertex_groups:
@@ -834,13 +934,14 @@ def create_instance():
     cloth.surface = False               # (bool value indicating we should run surface code)
     cloth.bind_idx = None               # (verts that are bound to the surface)
     
-    # # running update groups here for some reason.... Not sure if I need to...
-    if ob.data.is_editmode:
-        cloth.obm.verts.layers.deform.verify() # for vertex groups
-        #cloth.obm.verts.layers.deform.new()
-        update_groups(cloth, cloth.obm)
-    else:
-        update_groups(cloth)
+    if False:
+        # Update groups (I think to create the vertex group arrays like cloth.pin, etc...)
+        if ob.data.is_editmode:
+            cloth.obm.verts.layers.deform.verify() # for vertex groups
+            #cloth.obm.verts.layers.deform.new()
+            update_groups(cloth, cloth.obm)
+        else:
+            update_groups(cloth)
 
     cloth.undo = False
 
@@ -871,13 +972,29 @@ def create_instance():
     get_springs_2(cloth)
     T(t, "time it took to get the springs")
 
-    # coordinates and arrays
+    # coordinates and arrays ------------
     if ob.data.is_editmode:
         cloth.co = get_co_mode(ob)
     else:
         cloth.co = get_co_shape(ob, 'MC_current')
 
-    # Allocate arrys
+
+    # Bend spring data ()------------------
+    cloth.bend_data = True            # gets overwritten as none if there no bend sets
+    cloth.tridex = None               # index the whole cloth mesh as triangles
+    cloth.bend_ed_idx = None          # index the edges that are bend axes
+    cloth.bend_edges = None           # index the verts in the bend axes
+    cloth.bend_tri_tips = None        # tips on tris opposite the bend axes
+    cloth.bend_tris = None            # tris that are evaluated as bend tris
+    # Dynamic bend data:
+    cloth.bend_weights = None         # barycentric weights for placing tri tips
+    cloth.bend_surface_offset = None  # distance along non-unit cross product from tris
+    t = T()
+    # overwite all the None values
+    get_bend_sets(cloth)
+    T(t, "time it took to get the bend springs")
+
+    # Allocate arrays
     cloth.select_start = np.copy(cloth.co)
     cloth.pin_arr = np.copy(cloth.co)
     cloth.vel = np.zeros_like(cloth.co)
@@ -913,7 +1030,9 @@ def create_instance():
 
 # update the cloth ---------------
 def update_groups(cloth, obm=None, geometry=False):
-    
+    """Create of update data in the cloth instance
+    related to the vertex groups.
+    geometry is run when there are changes in the geomtry"""
     ob = cloth.ob
     current_index = ob.vertex_groups.active_index
 
@@ -1023,6 +1142,9 @@ def stretch_springs_basic(cloth, target=None): # !!! need to finish this
         if cloth.proxy is None:    
             cloth.proxy = target.evaluated_get(dg)
         co = get_co_mode(cloth.proxy) # needs to be depsgraph eval
+        # need to get co with modifiers that don't affect the vertex count
+        # so I could create a list of mods to turn off then use that fancy
+        # thing I created for turning off modifiers in the list.
         return measure_edges(co, cloth.basic_set)
 
     co = get_co_shape(cloth.ob, 'MC_source')
@@ -1041,34 +1163,6 @@ def stretch_springs_basic(cloth, target=None): # !!! need to finish this
     return measure_edges(co, cloth.basic_set)
 
 
-# update the cloth ---------------
-def stretch_springs(cloth, target=None): # !!! need to finish this
-    """Measure the springs"""
-    if target is not None:
-        dg = cloth.dg
-        #proxy = col.ob.to_mesh(bpy.context.evaluated_depsgraph_get(), True, calc_undeformed=False)
-        #proxy = col.ob.to_mesh() # shouldn't need to use mesh proxy because I'm using bmesh
-        if cloth.proxy is None:    
-            cloth.proxy = target.evaluated_get(dg)
-        co = get_co_mode(cloth.proxy) # needs to be depsgraph eval
-        return measure_edges(co, cloth.springs)
-
-    co = get_co_shape(cloth.ob, 'MC_source')
-    # can't figure out how to update new verts to source shape key when
-    #   in edit mode. Here we pull from source shape and add verts from
-    #   current bmesh where there are new verts. Need to think about
-    #   how to fix this so that it blendes correctly with the source
-    #   shape or target... Confusing....  Will also need to update
-    #   the source shape key with this data once we switch out
-    #   of edit mode. If someone is working in edit mode and saves
-    #   their file without switching out of edit mode I can't fix
-    #   that short of writing these coords to a file.
-    if cloth.ob.data.is_editmode:
-        co = np.append(co, cloth.co[co.shape[0]:], axis=0)
-
-    return measure_edges(co, cloth.springs)
-
-
 def surface_forces(cloth):
 
     # surface follow data ------------------------------------------    
@@ -1085,8 +1179,7 @@ def surface_forces(cloth):
     
     tri_co.shape = (shape[0], 3, 3)
     plot = np.sum(tri_co * bary[:, :, nax], axis=1)
-    
-    
+        
     # update the normals -----------------
     cloth.surface_norms = get_normals_from_tris(tri_co)
     norms = cloth.surface_norms * cloth.surface_norm_vals
@@ -1102,9 +1195,101 @@ def surface_forces(cloth):
 # ==============================================
 # ==============================================
 # ==============================================
+def bend_spring_force_linear(cloth):
+
+    tris = cloth.co[cloth.bend_tris]
+    surface_offset = cross_from_tris(tris) * cloth.bend_surface_offset
+    plot = np.sum(tris * cloth.bend_weights, axis=1) + surface_offset
+    # -----------------------------------------
+    bend_stiff = cloth.ob.MC_props.bend
+        
+    cv = (plot - cloth.co[cloth.bend_tri_tips]) * bend_stiff
+    
+    # swap the mags so that the larger triangles move a shorter distance
+    d = np.einsum('ij,ij->i', cv, cv)
+    l = np.sqrt(d)[:, None]
+    m1 = np.nan_to_num(l[::2] / l[1::2])
+    m2 = np.nan_to_num(l[1::2] / l[::2])
+    cv[1::2] *= m1
+    cv[::2] *= m2
+    
+    np.add.at(cloth.co, cloth.bend_tri_tips, cv)    
+
+    # now push the hinge the opposite direction
+    sh = cv.shape
+    cv.shape = (sh[0]//2,2,3)
+    mix = np.mean(cv, axis=1)
+    np.subtract.at(cloth.co, cloth.bend_edges, mix[:, None])
+    
+
+def bend_spring_force_mixed(cloth):
+
+    tris = cloth.co[cloth.bend_tris]
+    surface_offset = cross_from_tris(tris) * cloth.bend_surface_offset
+    plot = np.sum(tris * cloth.bend_weights, axis=1) + surface_offset
+    # -----------------------------------------
+    bend_stiff = cloth.ob.MC_props.bend * 0.2
+        
+    cv = plot - cloth.co[cloth.bend_tri_tips]
+    d = np.einsum('ij,ij->i', cv, cv)
+    l = np.sqrt(d)
+    
+    #if False:
+    m1 = np.nan_to_num(l[::2] / l[1::2])
+    m2 = np.nan_to_num(l[1::2] / l[::2])
+    cv[1::2] *= m1[:, None]
+    cv[::2] *= m2[:, None]
+    
+    # swap l to match
+    #l.shape = (l.shape[0] //2, 2)
+    #l = l[:,::-1].ravel()
+    
+    # mean method ----------------------
+    cloth.bend_tri_tip_array[:] = 0
+    print(cloth.bend_tri_tip_array.shape, "tri tip array shape")
+    print(cloth.bend_tri_tips.shape, "tri tips shape")
+    
+    np.add.at(cloth.bend_tri_tip_array, cloth.bend_tri_tips, l)
+    weights = np.nan_to_num(l / cloth.bend_tri_tip_array[cloth.bend_tri_tips])
+    cv *= weights[:, None]
+    cv *= bend_stiff
+
+    np.add.at(cloth.co, cloth.bend_tri_tips, cv)
+    sh = cv.shape
+    cv.shape = (sh[0]//2,2,3)
+    mix = np.mean(cv, axis=1)
+    np.subtract.at(cloth.co, cloth.bend_edges, mix[:, None])
+
+
+def bend_spring_force_U_cross(cloth):
+
+    tris = cloth.co[cloth.bend_tris]
+    #surface_offset = cross_from_tris(tris) * cloth.bend_surface_offset
+    cross = cross_from_tris(tris)
+    U_cross = cross / np.sqrt(np.einsum('ij,ij->i', cross, cross))[:, None]
+    surface_offset = U_cross * cloth.bend_U_d[:, None]
+    plot = np.sum(tris * cloth.bend_weights, axis=1) + surface_offset
+    # -----------------------------------------
+    bend_stiff = cloth.ob.MC_props.bend
+        
+    cv = plot - cloth.co[cloth.bend_tri_tips]
+    d = np.einsum('ij,ij->i', cv, cv)
+    l = np.sqrt(d) * bend_stiff        
+    move_l = l * bend_stiff        
+        
+    # mean method ----------------------
+    cloth.bend_tri_tip_array[:] = 0
+    np.add.at(cloth.bend_tri_tip_array, cloth.bend_tri_tips, l)
+    weights = np.nan_to_num(move_l / cloth.bend_tri_tip_array[cloth.bend_tri_tips])
+    cv *= weights[:, None]
+    cv *= bend_stiff
+
+    np.add.at(cloth.co, cloth.bend_tri_tips, cv)
+    np.subtract.at(cloth.co, cloth.bend_edges.ravel(), cv)
+
 
 def spring_basic(cloth):
-
+        
     # get properties
     grav = cloth.ob.MC_props.gravity * 0.001  
     vel = cloth.ob.MC_props.velocity    
@@ -1123,12 +1308,8 @@ def spring_basic(cloth):
     cloth.vel_zero[:] = cloth.co
     cloth.feedback[:] = cloth.co
     
-    iters = cloth.ob.MC_props.iters
-    for i in range(iters):
-
-        # apply pin force each iteration
-        #pin_vecs = (cloth.pin_arr - cloth.co) * cloth.pin
-        #cloth.co += pin_vecs
+    s_iters = cloth.ob.MC_props.stretch_iters
+    for i in range(s_iters):
 
         # (current vec, dot, length)
         cv, cd, cl = measure_edges(cloth.co, cloth.basic_set) # from current cloth state
@@ -1150,10 +1331,19 @@ def spring_basic(cloth):
         # mean method -------------------
         
         # apply forces ------------------
-        move = cv * np.nan_to_num(move_l / cl)[:,None]
-        #midx = move#[cloth.e_fancy]
+        #if False:
+        move = cv * (np.nan_to_num(move_l / cl)[:,None])
+        
         move *= weights[:,None]
         np.add.at(cloth.co, cloth.basic_v_fancy, move)
+
+        if True:
+            # test ====================== bend springs
+            # test ====================== bend springs
+            if cloth.bend_data is not None:    
+                bend_spring_force_mixed(cloth)
+            # test ====================== bend springs
+            # test ====================== bend springs
 
         # apply surface sew for each iteration:
         if cloth.surface:
@@ -1167,17 +1357,8 @@ def spring_basic(cloth):
         if cloth.ob.data.is_editmode:
             if pause_selected:
 
-                # need to check if copyto is faster than:
-                #cloth.co[cloth.selected] = cloth.pin_arr[cloth.selected]
-                
-                pass
-                translate_vecs = cloth.pin_arr[cloth.selected] - cloth.co[cloth.selected]
-                #np.copyto(cloth.co, cloth.select_start, where=cloth.selected[:,nax])
-                #cloth.pin_arr[cloth.selected] = cloth.co[cloth.selected] + translate_vecs
                 cloth.co[cloth.selected] = cloth.select_start[cloth.selected]
-                
-                if cloth.ob.active_shape_key == cloth.ob.data.shape_keys.key_blocks['MC_source']:    
-                    cloth.pin_arr[cloth.selected] = cloth.co[cloth.selected] + translate_vecs#cloth.select_start[cloth.selected]
+                cloth.pin_arr[cloth.selected] = cloth.select_start[cloth.selected]
     
     # extrapolate maybe? # get spring move, multiply vel by fraction, add spring move
     spring_move = cloth.co - cloth.feedback
@@ -1261,18 +1442,8 @@ def spring_force(cloth):
         pause_selected = True
         if cloth.ob.data.is_editmode:
             if pause_selected:
-
-                # need to check if copyto is faster than:
-                #cloth.co[cloth.selected] = cloth.pin_arr[cloth.selected]
-                
-                pass
-                translate_vecs = cloth.pin_arr[cloth.selected] - cloth.co[cloth.selected]
-                #np.copyto(cloth.co, cloth.select_start, where=cloth.selected[:,nax])
-                #cloth.pin_arr[cloth.selected] = cloth.co[cloth.selected] + translate_vecs
                 cloth.co[cloth.selected] = cloth.select_start[cloth.selected]
-                
-                if cloth.ob.active_shape_key == cloth.ob.data.shape_keys.key_blocks['MC_source']:    
-                    cloth.pin_arr[cloth.selected] = cloth.co[cloth.selected] + translate_vecs#cloth.select_start[cloth.selected]
+                cloth.pin_arr[cloth.selected] = cloth.select_start[cloth.selected]
     
     # extrapolate maybe? # get spring move, multiply vel by fraction, add spring move
     spring_move = cloth.co - cloth.feedback
@@ -1344,6 +1515,8 @@ def cloth_physics(ob, cloth, collider):
         index = ob.data.shape_keys.key_blocks.find('MC_current')
         if ob.active_shape_key_index != index:
             cloth.update_lookup = True
+            cloth.ob.update_from_editmode()
+            bary_bend_springs(cloth)
             return
         
         # bmesh gets removed when someone clicks on MC_current shape"
@@ -1381,6 +1554,7 @@ def cloth_physics(ob, cloth, collider):
             np.copyto(cloth.pin_arr, cloth.co)
             #cloth.springs, cloth.v_fancy, cloth.e_fancy, cloth.flip = get_springs(cloth, cloth.obm)
             get_springs_2(cloth)
+            get_bend_sets(cloth)
             cloth.geometry = get_mesh_counts(ob, cloth.obm)
             # cloth.sew_springs = get_sew_springs() # build
             cloth.obm.verts.ensure_lookup_table()
@@ -1905,20 +2079,25 @@ class McPropsObject(bpy.types.PropertyGroup):
     wind:\
     bpy.props.FloatProperty(name="Wind", description="This Really Blows", default=0.0, min= -1000, max=1000, soft_min= -10.0, soft_max=10.0, precision=3)
 
-
+    # stiffness
     feedback:\
     bpy.props.FloatProperty(name="Feedback", description="Extrapolate for faster solve", default=1, min= -1000, max=1000, soft_min= 0.0, soft_max=1, precision=3)
 
-
-    iters:\
-    bpy.props.IntProperty(name="Iters", description="Number of iterations of cloth solver", default=2, min=1, max=1000)#, precision=1)
+    stretch_iters:\
+    bpy.props.IntProperty(name="Iters", description="Number of iterations of cloth solver", default=2, min=0, max=1000)#, precision=1)
 
     stretch:\
     bpy.props.FloatProperty(name="Stretch", description="Strength of the stretch springs", default=1, min=0, max=10, soft_min= 0, soft_max=1, precision=3)
 
     push:\
     bpy.props.FloatProperty(name="Push", description="Strength of the push springs", default=1, min=0, max=1, soft_min= -2, soft_max=2, precision=3)
-    
+
+    bend_iters:\
+    bpy.props.IntProperty(name="Bend Iters", description="Number of iterations of bend springs", default=2, min=0, max=1000)#, precision=1)
+
+    bend:\
+    bpy.props.FloatProperty(name="Bend", description="Strength of the bend springs", default=1, min=0, max=10, soft_min= 0, soft_max=1, precision=3)
+
     # Sewing
     sew_force:\
     bpy.props.FloatProperty(name="Sew Force", description="Shrink Sew Edges", default=0.1, min=0, max=1, soft_min= -100, soft_max=100, precision=3)
@@ -1926,9 +2105,6 @@ class McPropsObject(bpy.types.PropertyGroup):
     surface_follow_selection_only:\
     bpy.props.BoolProperty(name="Use Selected Faces", description="Bind only to selected faces", default=False)
     
-
-
-
 
 # create properties ----------------
 # scene:
@@ -1945,8 +2121,6 @@ class McPropsScene(bpy.types.PropertyGroup):
 
     delay:\
     bpy.props.FloatProperty(name="Delay", description="Slow down the continuous update", default=0, min=0, max=100)
-
-
 
 # ^                                                          ^ #
 # ^                     END properties                       ^ #
@@ -2290,11 +2464,13 @@ class PANEL_PT_modelingClothSettings(PANEL_PT_MC_Master, bpy.types.Panel):
 
             #col.scale_y = 1
             col = layout.column(align=True)
-            col.prop(ob.MC_props, "iters", text="stretch iterations")
+            col.prop(ob.MC_props, "stretch_iters", text="stretch iters")
             col.prop(ob.MC_props, "stretch", text="stretch")
             col.prop(ob.MC_props, "push", text="push")
             col.prop(ob.MC_props, "feedback", text="feedback")
-
+            col.prop(ob.MC_props, "bend_iters", text="bend iters")
+            col.prop(ob.MC_props, "bend", text="bend")
+            
 
 # ^                                                          ^ #
 # ^                     END draw code                        ^ #
