@@ -334,3 +334,23 @@ def get_co_with_modifiers(ob, types=[], names=[], include_mesh=False):
         return co, proxy.data
 
     return co
+
+
+def dots(a,b):
+    #N x 3 - N x 3
+    x = np.einsum('ij,ij->i', a, b)
+    #3 - N x 3
+    y = np.einsum('j,ij->i', a, b)
+    #N x 3 - N x N x 3
+    z = np.einsum('ij,ikj->ik', a, b)    
+    #N x N x 3 - N x N x 3    
+    w = np.einsum('ijk,ijk->ij', a, b)
+    #N x 2 x 3 - N x 2 x 3
+    a = np.einsum('ijk,ijk->ij', a, b)    
+    #mismatched N x 3 - N2 x 3 with broadcasting so that the end result is tiled
+    mismatched = np.einsum('ij,i...j->...i', a, np.expand_dims(b, axis=0))    
+    # 4,3,3 - 4,2,3 with broadcasting    
+    mismatched_2 = np.einsum('ijk,ij...k->i...j', a, np.expand_dims(b, axis=1))
+    return x,y,z,w,a, mismatched, mismatched_2
+    
+
