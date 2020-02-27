@@ -273,6 +273,12 @@ def Nx3(ob):
     ar.shape = (count, 3)
     return ar
 
+# universal ---------------
+def get_co_mode_2(ob, arr):
+    ob.update_from_editmode()
+    ob.data.vertices.foreach_get('co', arr.ravel())
+    return arr
+
 
 # universal ---------------
 def get_co_mode(ob=None):
@@ -492,6 +498,100 @@ def inside_triangles(tris, points, check=True, surface_offset=False, cloth=None)
     return weights.T, check
 
 
+def cpoe_bend_plot_values(cloth):
+
+    # get axis vecs
+    co = get_co_shape(cloth.ob, key="MC_source")
+    be = cloth.bend_edges
+    tt = cloth.bend_tri_tips.reshape(be.shape)   #[:, ::-1] # flip it to the other side
+    po_vecs = co[tt] - co[be[:, 0]][:, None]
+    tris = co[tt]
+    origins = co[be[:, 0]]
+    
+    # get axis plot (non-unit vecs so it will scale? I think this makes sense...)
+    axis_vecs = co[be[:, 1]] - origins
+    d_po = np.einsum('ij, ikj->ik', axis_vecs, po_vecs)
+    d_axis = np.einsum('ij,ij->i', axis_vecs, axis_vecs)
+    # --------------------------------------
+    cloth.axis_div = d_po / d_axis[:, None]
+    """
+    A pair of axis dots for each axis. One for each tri tip, and a partridge in a pair tree.
+    """
+    
+    # get cross plot (unit vecs here stabilize)
+    cross_vecs = tris - origins[:, None]
+    cross = np.roll(np.cross(cross_vecs, axis_vecs[:, None]), 1, axis=1)
+    n_2_3 = cross.shape
+    n_3 = (n_2_3[0] *2, 3)
+    cross.shape = n_3
+    po_vecs.shape = cross.shape
+    U_cross = cross / np.sqrt(np.einsum('ij, ij->i', cross, cross))[:, None]
+    # --------------------------------------
+    cloth.cross_div = np.einsum('ij, ij->i', U_cross, po_vecs)[:, None]
+
+    """
+    How far off the surface the opposite tri tip is along the normal
+    """
+    
+    # get tri plot (unit vecs here stabilize)
+    cross.shape = n_2_3
+    tri_vecs = np.cross(cross, axis_vecs[:, None])
+    tri_vecs.shape = n_3
+    cross.shape = n_3
+    d_tv = np.einsum('ij, ij->i', tri_vecs, tri_vecs)
+    U_tri = tri_vecs / np.sqrt(d_tv)[:, None] 
+    # --------------------------------------
+    cloth.tri_div = np.einsum('ij, ij->i', U_tri, po_vecs)[:, None]
+    """
+    Cross of the normal and the axis pointing perpindicular to the axis
+    along the surface of the tri opposite the tip.
+    """
+
+
+def cpoe_bend_plot(cloth):
+    """Plot values based on cpoe using axis and cross products"""
+    
+    axis_div = cloth.axis_div
+    tri_div = cloth.tri_div
+    cross_div = cloth.cross_div
+    
+    co = cloth.co
+    be = cloth.bend_edges
+    tt = cloth.bend_tri_tips.reshape(be.shape)   #[:, ::-1] # flip it to the other side
+    po_vecs = co[tt] - co[be[:, 0]][:, None]
+    tris = co[tt]
+    origins = co[be[:, 0]]
+
+    # plot axis (origin added here)
+    axis_vecs = co[be[:, 1]] - origins
+    axis_plot = origins[:, None] + axis_vecs[:, None] * axis_div[:,:,None]
+
+    # plot normal
+    cross_vecs = tris - origins[:, None]
+    cross = np.roll(np.cross(cross_vecs, axis_vecs[:, None]), 1, axis=1)
+    n_2_3 = cross.shape
+    n_3 = (n_2_3[0] * 2, 3)
+    cross.shape = n_3
+    po_vecs.shape = cross.shape
+    U_cross = cross / np.sqrt(np.einsum('ij, ij->i', cross, cross))[:, None]
+    cross_plot = U_cross * cross_div
+    
+
+    # plot along tri surface
+    cross.shape = n_2_3
+    tri_vecs = np.cross(cross, axis_vecs[:, None])
+    tri_vecs.shape = n_3
+    cross.shape = n_3
+    d_tv = np.einsum('ij, ij->i', tri_vecs, tri_vecs)
+    U_tri = tri_vecs / np.sqrt(d_tv)[:, None] 
+    tri_plot = U_tri * tri_div
+
+    axis_plot.shape = n_3
+    plot = tri_plot + axis_plot + cross_plot
+    
+    return plot
+    
+
 def get_cloth(ob):
     """Return the cloth instance from the object"""    
     return MC_data['cloths'][ob['MC_cloth_id']]
@@ -635,11 +735,6 @@ def bary_bend_springs(cloth):
     cloth.bend_weights = weights[:,:,None]
     cloth.bend_surface_offset = surface_offset[:, None]
     cloth.bend_U_d = U_d
-    print('we are running bary weight update')
-    print('we are running bary weight update')
-    print('we are running bary weight update')
-    print('we are running bary weight update')
-    print('we are running bary weight update')
     
 
 # precalculated ---------------
@@ -926,6 +1021,7 @@ def create_instance():
     cloth.pin = get_weights(ob, 'MC_pin', obm=cloth.obm)[:, nax]
     cloth.surface_vgroup_weights = get_weights(ob, 'MC_surface_follow', obm=cloth.obm)[:, nax]
     cloth.update_lookup = False
+    cloth.selected = np.zeros(len(ob.data.vertices), dtype=np.bool)
 
     # surface follow data ------------------------------------------
     cloth.surface_tridex = None         # (index of tris in surface object)
@@ -993,6 +1089,13 @@ def create_instance():
     # overwite all the None values
     get_bend_sets(cloth)
     T(t, "time it took to get the bend springs")
+    
+    # cpoe method for plot
+    cloth.axis_div = None
+    cloth.cross_div = None
+    cloth.tri_div = None
+    cpoe_bend_plot_values(cloth)
+
 
     # Allocate arrays
     cloth.select_start = np.copy(cloth.co)
@@ -1220,13 +1323,44 @@ def bend_spring_force_linear(cloth):
     cv.shape = (sh[0]//2,2,3)
     mix = np.mean(cv, axis=1)
     np.subtract.at(cloth.co, cloth.bend_edges, mix[:, None])
+
+
+def bend_spring_not_bary():
+    # get the normal from the opposite tri
+    # get the cross of normal and axis.
+    # get cpoe on axis
+    # get cpoe on normal/axis cross
+    # get cpoe on cross for how far up. (x,y,z in three steps)
+    # now we have a square that let's us plot the point
+    # If we use unit vecs on the cross and axis distortions of the faces
+    #   will hopefully be less likely to make things explode.
     
+    # !!! Might be able to use this on n-gons. Just pick a point
+    #   in the ngon that makes sense for getting a normal with the axis
+    pass
+
 
 def bend_spring_force_mixed(cloth):
 
     tris = cloth.co[cloth.bend_tris]
-    surface_offset = cross_from_tris(tris) * cloth.bend_surface_offset
-    plot = np.sum(tris * cloth.bend_weights, axis=1) + surface_offset
+    
+
+    cpoe = True
+    if cpoe:
+        plot = cpoe_bend_plot(cloth)
+    else:
+        unit = True # for testing unit normalized surface offset
+        if unit:
+            cross = cross_from_tris(tris)
+            U_cross = cross / np.sqrt(np.einsum('ij,ij->i', cross, cross))[:, None]
+            surface_offset = U_cross * cloth.bend_U_d[:, None]
+
+        else:
+            surface_offset = cross_from_tris(tris) * cloth.bend_surface_offset
+        plot = np.sum(tris * cloth.bend_weights, axis=1) + surface_offset
+    
+        #cloth.green.location = plot[0]
+        #cloth.red.location = plot[1]
     # -----------------------------------------
     bend_stiff = cloth.ob.MC_props.bend * 0.2
         
@@ -1246,8 +1380,8 @@ def bend_spring_force_mixed(cloth):
     
     # mean method ----------------------
     cloth.bend_tri_tip_array[:] = 0
-    print(cloth.bend_tri_tip_array.shape, "tri tip array shape")
-    print(cloth.bend_tri_tips.shape, "tri tips shape")
+    #print(cloth.bend_tri_tip_array.shape, "tri tip array shape")
+    #print(cloth.bend_tri_tips.shape, "tri tips shape")
     
     np.add.at(cloth.bend_tri_tip_array, cloth.bend_tri_tips, l)
     weights = np.nan_to_num(l / cloth.bend_tri_tip_array[cloth.bend_tri_tips])
@@ -1517,6 +1651,7 @@ def cloth_physics(ob, cloth, collider):
             cloth.update_lookup = True
             cloth.ob.update_from_editmode()
             bary_bend_springs(cloth)
+            cpoe_bend_plot_values(cloth)
             return
         
         # bmesh gets removed when someone clicks on MC_current shape"
@@ -1555,6 +1690,7 @@ def cloth_physics(ob, cloth, collider):
             #cloth.springs, cloth.v_fancy, cloth.e_fancy, cloth.flip = get_springs(cloth, cloth.obm)
             get_springs_2(cloth)
             get_bend_sets(cloth)
+            cpoe_bend_plot_values(cloth)
             cloth.geometry = get_mesh_counts(ob, cloth.obm)
             # cloth.sew_springs = get_sew_springs() # build
             cloth.obm.verts.ensure_lookup_table()
@@ -1568,9 +1704,24 @@ def cloth_physics(ob, cloth, collider):
             cloth.obm.verts.ensure_lookup_table()
         # updating the mesh coords -----------------@@
         # detects user changes to the mesh like grabbing verts
+        #t = T()
         cloth.co = np.array([v.co for v in cloth.obm.verts])
+        #T(t, "list comp")
+
+        
+        #t = T()
+        # doesn't update grab changes.
+        #cloth.obm.to_mesh(cloth.ob.data)
+        #get_co_mode_2(cloth.ob, cloth.co)
+        #print(cloth.co)
+        #bmesh.update_edit_mesh(ob.data)
+        #T(t, "co_mode_2")
+        
         pause_selected = True
         if pause_selected: # create this property for the user (consider global settings for all meshes)
+            #cloth.ob.update_from_editmode()
+            #ob.data.vertices.foreach_get('select', cloth.selected)
+            #cloth.ob.data.vertices.foreach_get('co', cloth.co.ravel())
             cloth.selected = np.array([v.select for v in cloth.obm.verts])
         """======================================"""
         """======================================"""
@@ -1586,6 +1737,9 @@ def cloth_physics(ob, cloth, collider):
 
         for i in range(cloth.co.shape[0]):
             cloth.obm.verts[i].co = cloth.co[i]
+        
+        #cloth.ob.data.vertices.foreach_set('co', cloth.co.ravel())
+        #ob.data.update()
                     
         bmesh.update_edit_mesh(ob.data)
         if False: # (there might be a much faster way by writing to a copy mesh then loading copy to obm)
@@ -2105,6 +2259,17 @@ class McPropsObject(bpy.types.PropertyGroup):
     surface_follow_selection_only:\
     bpy.props.BoolProperty(name="Use Selected Faces", description="Bind only to selected faces", default=False)
     
+    # Vertex Groups
+    vg_pin:\
+    bpy.props.FloatProperty(name="Pin", description="Pin Vertex Group", default=0, min=0, max=1, soft_min= -2, soft_max=2, precision=3)
+
+    vg_drag:\
+    bpy.props.FloatProperty(name="Drag", description="Drag Vertex Group", default=0, min=0, max=1, soft_min= -2, soft_max=2, precision=3)
+
+    vg_surface_follow:\
+    bpy.props.FloatProperty(name="Surface Follow", description="Surface Follow Vertex Group", default=0, min=0, max=1, soft_min= -2, soft_max=2, precision=3)
+        
+    
 
 # create properties ----------------
 # scene:
@@ -2307,6 +2472,22 @@ class MCApplyForExport(bpy.types.Operator):
         ob.data.update()
 
         return {'FINISHED'}
+    
+    
+class MCVertexGroupPin(bpy.types.Operator):
+    """Add Selected To Pin Vertex Group"""
+    bl_idname = "object.mc_vertex_group_pin"
+    bl_label = "MC Vertex Group Pin"
+    bl_options = {'REGISTER', 'UNDO'}
+    def execute(self, context):
+        ob = MC_data['recent_object']
+        if ob is None:
+            ob = bpy.context.object
+
+        cloth = MC_data['cloths'][ob['MC_cloth_id']]
+        
+        return {'FINISHED'}
+    
 
 # ^                                                          ^ #
 #                  END registered operators                    #
@@ -2472,6 +2653,33 @@ class PANEL_PT_modelingClothSettings(PANEL_PT_MC_Master, bpy.types.Panel):
             col.prop(ob.MC_props, "bend", text="bend")
             
 
+class PANEL_PT_modelingClothVertexGroups(PANEL_PT_MC_Master, bpy.types.Panel):
+    """Modeling Cloth Vertex Groups"""
+    bl_label = "MC Vertex Groups"
+    bl_idname = "PANEL_PT_modeling_cloth_vertex_groups"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Extended Tools"
+
+    def draw(self, context):
+        ob = self.ob
+        cloth = ob.MC_props.cloth
+        if cloth:
+            sc = bpy.context.scene
+            layout = self.layout
+
+            # use current mesh or most recent cloth object if current ob isn't mesh
+            MC_data['recent_object'] = ob
+            col = layout.column(align=True)
+            col.scale_y = 1
+            col.label(text='Vertex Groups')
+            col.operator('object.mc_vertex_group_pin', text="Pin Selected", icon='PINNED')
+            col.prop(ob.MC_props, "vg_pin", text="pin")
+            col.prop(ob.MC_props, "vg_drag", text="drag")
+            col.prop(ob.MC_props, "vg_surface_follow", text="Surface Follow")
+
+
+
 # ^                                                          ^ #
 # ^                     END draw code                        ^ #
 # ============================================================ #
@@ -2550,6 +2758,8 @@ classes = (
     PANEL_PT_modelingClothMain,
     PANEL_PT_modelingClothSettings,
     PANEL_PT_modelingClothSewing,
+    PANEL_PT_modelingClothVertexGroups,
+    MCVertexGroupPin,
 )
 
 
