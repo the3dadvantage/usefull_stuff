@@ -1107,7 +1107,12 @@ def create_instance():
     
     cloth.target_co = get_co_mode(cloth.target) # (will be None if target is None)
     cloth.velocity = Nx3(ob)
-
+    
+    # external connections
+    external_co = None
+    external_springs = None # 2d edge-like array where right side is idx from the points in an external object
+    
+    
     # target co
     same = False
     if cloth.target is not None: # if we are doing a two way update we will need to put run the updater here
