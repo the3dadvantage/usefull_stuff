@@ -349,7 +349,6 @@ def get_mesh_counts(ob, obm=None):
     return np.array([v_count, e_count, f_count])
 
 
-# universal ---------------
 def reset_shapes(ob):
     """Create shape keys if they are missing"""
 
@@ -1107,12 +1106,7 @@ def create_instance():
     
     cloth.target_co = get_co_mode(cloth.target) # (will be None if target is None)
     cloth.velocity = Nx3(ob)
-    
-    # external connections
-    external_co = None
-    external_springs = None # 2d edge-like array where right side is idx from the points in an external object
-    
-    
+
     # target co
     same = False
     if cloth.target is not None: # if we are doing a two way update we will need to put run the updater here
@@ -1398,6 +1392,10 @@ def bend_spring_force_mixed(cloth):
     cv.shape = (sh[0]//2,2,3)
     mix = np.mean(cv, axis=1)
     np.subtract.at(cloth.co, cloth.bend_edges, mix[:, None])
+
+
+def external_forces(cloth):
+    pass
 
 
 def bend_spring_force_U_cross(cloth):
