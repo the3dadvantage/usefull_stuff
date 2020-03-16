@@ -1,4 +1,8 @@
 """ New Features: """
+# someone requested a feature to let the settings apply to all selected cloth objects. It would have to be in a preference setting.
+#   so probably a user preferences section is in order. The preferences need to save to the addon
+#   directory so when blender loads a new file the settings come in.
+
 # pause button using space bar or something with modal grab
 # cache file option
 # awesome sew doesn't care how many verts (target a location based on a percentage of the edge)
