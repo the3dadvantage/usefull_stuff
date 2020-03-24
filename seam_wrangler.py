@@ -906,3 +906,4 @@ def test():
 
     # restore the active state
     bpy.context.view_layer.objects.active = active_object
+    # copied
