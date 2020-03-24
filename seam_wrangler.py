@@ -7,6 +7,46 @@ except ImportError:
     pass
 
 
+def setup_pin_group(ob, vidx):
+    
+    # setup vertex pin group. (matches points manipulated by seam manager)
+    if 'SW_seam_pin' not in ob.vertex_groups:
+        ob.vertex_groups.new(name='SW_seam_pin')
+    
+    for mod in ob.modifiers:
+        if mod.type == "CLOTH":
+            mod.settings.vertex_group_mass = 'SW_seam_pin'
+            mod.settings.pin_stiffness = 1.0
+        
+    pidx = ob.vertex_groups['SW_seam_pin'].index
+    vc = len(ob.data.vertices)
+    ara = np.arange(vc)
+    
+    # !!! seems to be a bug in blender that if you set the weights as you go
+    #   it will always set the wieght of zero
+    #   Iterating twice instead.
+    for v in ara.tolist(): # without tolist() vertex group add breaks 
+        ob.vertex_groups['SW_seam_pin'].add([pidx, v], 0.0, 'REPLACE')
+    
+    for v in vidx.tolist():
+        ob.data.vertices[v].groups[pidx].weight = 1.0    
+    
+    return pidx
+
+
+def get_proxy_co(ob, co=None):
+    """Gets co with modifiers like cloth"""
+    dg = bpy.context.evaluated_depsgraph_get()        
+    prox = ob.evaluated_get(dg)
+    proxy = prox.to_mesh()
+    if co is None:    
+        vc = len(ob.data.vertices)
+        co = np.empty((vc, 3), dtype=np.float32)
+    proxy.vertices.foreach_get('co', co.ravel())
+    ob.to_mesh_clear()
+    return co
+
+
 def reset_shapes(ob):
     """Create shape keys if they are missing"""
 
@@ -154,7 +194,9 @@ def slice_setup(Slice, cloth_key=None): # !!! set testing to False !!!
     Slice.flat_co = flat_co
 
     # cloth shape coords
-    cloth_co = get_co_shape(ob, cloth_key)
+    #cloth_co = get_co_shape(ob, cloth_key)
+    cloth_co = get_proxy_co(ob)
+    
     Slice.cloth_co = cloth_co
 
     # ------------
@@ -821,7 +863,7 @@ def seam_manager(Bobj=None, frames=None, kill_frame=None, settings=None, cloth_k
     hd = bpy.context.scene.seam_handler_data
     hd['count'] = 0
     hd['ob'] = Bobj
-
+    
     if frames is None:
         frames = [1,2,3]
     hd['frames'] = frames
@@ -842,22 +884,37 @@ def seam_manager(Bobj=None, frames=None, kill_frame=None, settings=None, cloth_k
 
     hd['settings'] = settings
 
+    # For the pin vertex group
+    vc = len(Bobj.data.vertices)
+    ara = np.arange(vc)
+    vidx = hd['vps']
+    pidx = setup_pin_group(Bobj, vidx)
+
+    # the function that runs every frame
     def seam_wrangler_anim(scene):
         active_object = bpy.context.object
+        ob = hd['ob']
         print('running seam manager')
         f = bpy.context.scene.frame_current
         hd = bpy.context.scene.seam_handler_data
         if f in hd['frames']:
-            idx = hd['count']
-            settings = hd['settings'][idx]
-            if hd['count'] > len(settings):
-                settings = {}
 
-            ob = hd['ob']
-            manage_seams(ob, cloth_key, settings=settings, test_val=None, debug=None)
+            if bpy.context.scene.frame_current % 2 == 0:
+                for v in vidx.tolist():
+                    ob.data.vertices[v].groups[pidx].weight = 1.0
+            
+                idx = hd['count']
+                settings = hd['settings'][idx]
+                if hd['count'] > len(settings):
+                    settings = {}
+
+                manage_seams(ob, cloth_key, settings=settings, test_val=None, debug=None)
+
             hd['count'] += 1
 
-            bpy.context.view_layer.objects.active = active_object
+            if (bpy.context.scene.frame_current + 1) % 2 == 0:
+                for v in vidx.tolist(): # without tolist() vertex group add breaks
+                    ob.data.vertices[v].groups[pidx].weight = 0
 
         if f == hd['kill_frame']:
             # clean dead versions of the animated handler
@@ -869,6 +926,10 @@ def seam_manager(Bobj=None, frames=None, kill_frame=None, settings=None, cloth_k
             for i in idx_to_kill[::-1]:
                 del(bpy.app.handlers.frame_change_post[i])
                 print("deleted handler ", i)
+
+            # clean up pin group
+            for v in vidx.tolist(): # without tolist() vertex group add breaks
+                ob.data.vertices[v].groups[pidx].weight = 0
 
 
     bpy.app.handlers.frame_change_post.append(seam_wrangler_anim)
@@ -890,7 +951,7 @@ def test():
     ob.data.shape_keys.key_blocks['CLOTH1153'].data.foreach_set('co', reset_shape.ravel())
     ob.data.update()
 
-    # generage data if needed
+    # generate data if needed
 
     # debug None: Run normal. Create data and position if needed, run seams
     # debug 1: Update in viewport with handler. Position only
@@ -906,4 +967,3 @@ def test():
 
     # restore the active state
     bpy.context.view_layer.objects.active = active_object
-    # copied
