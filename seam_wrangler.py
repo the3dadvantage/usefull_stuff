@@ -810,6 +810,11 @@ def position_triangles(ob, test_val, debug=None, cloth_key=None):
             tris.MC_props.continuous = True
             return
         tris.MC_props.seam_wrangler = True # debug 3 runs in callback without manage seams
+        
+        # For the pin vertex group
+        data['pidx'] = setup_pin_group(ob, data['vps'])
+        for v in data['vps'].tolist():
+            ob.data.vertices[v].groups[data['pidx']].weight = 1.0        
 
 
 def manage_seams(ob, cloth_key=None, settings={}, test_val=None, debug=None):
@@ -884,12 +889,6 @@ def seam_manager(Bobj=None, frames=None, kill_frame=None, settings=None, cloth_k
 
     hd['settings'] = settings
 
-    # For the pin vertex group
-    vc = len(Bobj.data.vertices)
-    ara = np.arange(vc)
-    vidx = hd['vps']
-    pidx = setup_pin_group(Bobj, vidx)
-
     # the function that runs every frame
     def seam_wrangler_anim(scene):
         active_object = bpy.context.object
@@ -898,10 +897,10 @@ def seam_manager(Bobj=None, frames=None, kill_frame=None, settings=None, cloth_k
         f = bpy.context.scene.frame_current
         hd = bpy.context.scene.seam_handler_data
         if f in hd['frames']:
-
             if bpy.context.scene.frame_current % 2 == 0:
-                for v in vidx.tolist():
-                    ob.data.vertices[v].groups[pidx].weight = 1.0
+                if 'pidx' in hd:
+                    for v in hd['vps']:
+                        ob.data.vertices[v].groups[hd['pidx']].weight = 1.0
             
                 idx = hd['count']
                 settings = hd['settings'][idx]
@@ -913,8 +912,8 @@ def seam_manager(Bobj=None, frames=None, kill_frame=None, settings=None, cloth_k
             hd['count'] += 1
 
             if (bpy.context.scene.frame_current + 1) % 2 == 0:
-                for v in vidx.tolist(): # without tolist() vertex group add breaks
-                    ob.data.vertices[v].groups[pidx].weight = 0
+                for v in hd['vps']:
+                    ob.data.vertices[v].groups[hd['pidx']].weight = 0
 
         if f == hd['kill_frame']:
             # clean dead versions of the animated handler
@@ -967,3 +966,4 @@ def test():
 
     # restore the active state
     bpy.context.view_layer.objects.active = active_object
+    # copied
