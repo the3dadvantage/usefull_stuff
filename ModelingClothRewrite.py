@@ -1,19 +1,39 @@
+# when extruding:
+#   currently have to switch to the source shape
+#   This is bceause the coords will be in the same location
+#       in the source shape. Could pause existing selection
+#       along with new selection. Maybe play with source being
+#       relative only while that's happening then switch it back
+#       to the current being relative to source?
+#   To confirm maybe wait until deselct all or wait a given
+#       number of iterations?
+
+# cache keyframing could be really cool. So do a linear
+# interpolation between cached frames.
+
+# !!!!!!!!!!!!!!!
+# mesh keyframing might actually be what I need for
+# my procedural animation stuff.
+# think about the barycentric springs with equalateral tris applied to an armature
+# !!!!!!!!!!!!!!!
+
+# would it make sense to run cloth physics on a lattice or curve object?????
+
+
 try:
     import bpy
     from bpy.ops import op_as_string
     from bpy.app.handlers import persistent
     import os
+    import shutil
+    import pathlib as pa
     import bmesh
     import functools as funky
     import numpy as np
     from numpy import newaxis as nax
     import time
     import copy # for duplicate cloth objects
-    # global data
-    MC_data = {}
-    MC_data['colliders'] = {}
-    MC_data['cloths'] = {}
-    MC_data['iterator'] = 0
+
 
 except ImportError:
     pass
@@ -25,19 +45,24 @@ try:
 except:
     print("could not import modal check")
 
-
+# global data
+MC_data = {}
+MC_data['colliders'] = {}
+MC_data['cloths'] = {}
+MC_data['iterator'] = 0
 # recent_object allows cloth object in ui
 #   when selecting empties such as for pinning.
 MC_data['recent_object'] = None
 
 
+# developer functions ------------------------
 def reload():
     """!! for development !! Resets everything"""
     # when this is registered as an addon I will want
     #   to recaluclate these objects not set prop to false
 
     # Set all props to False:
-    reload_props = ['continuous', 'collider', 'animated', 'cloth']
+    reload_props = ['continuous', 'collider', 'animated', 'cloth', 'cache', 'cache_only', 'play_cache']
     if 'MC_props' in dir(bpy.types.Object):
         for i in reload_props:
             for ob in bpy.data.objects:
@@ -57,16 +82,112 @@ def reload():
 reload()
 
 
-print("new--------------------------------------")
-def cache(ob):
-    # for when I cache animation data
-    # store the cache in the place where
-    # the blend file is saved
-    # if the blend file is not saved should
-    #   prolly store it in a tmp directors...
-    folder = bpy.data.filepath
-    file = os.path.join(folder, ob.name)
+# developer functions ------------------------
+def get_proxy_co(ob, co=None):
+    """Gets co with modifiers like cloth"""
+    dg = bpy.context.evaluated_depsgraph_get()        
+    prox = ob.evaluated_get(dg)
+    proxy = prox.to_mesh()
+    if co is None:    
+        vc = len(ob.data.vertices)
+        co = np.empty((vc, 3), dtype=np.float32)
+    proxy.vertices.foreach_get('co', co.ravel())
+    ob.to_mesh_clear()
+    return co
 
+
+# developer functions ------------------------
+def create_object_cache(ob):
+    print('cache only function')
+
+
+print("new--------------------------------------")
+
+
+def cache_interpolation(cloth):
+    # !!! have to finish this one
+    ob = cloth.ob
+    f = ob.MC_props.current_cache_frame
+    fp = cloth.cache_dir    
+    idx = np.array([int(i.parts[-1]) for i in fp.iterdir()])
+    
+
+# Cache functions ---------------
+def cache(cloth, keying=False):
+    """Store a text file of Nx3 numpy coords."""
+    ob = cloth.ob
+    fp = cloth.cache_dir
+    
+    maf = ob.MC_props.max_frames
+    con = ob.MC_props.continuous
+    if keying:
+        con = True
+
+    # update ccf either to current frame or to +1 if continuous
+    ccf = ob.MC_props.current_cache_frame
+    f = bpy.context.scene.frame_current
+    ob.MC_props['current_cache_frame'] = f
+    
+    if con:
+        f = ccf
+        ob.MC_props['current_cache_frame'] = ccf + 1
+
+    txt = fp.joinpath(str(f))
+
+    #sf = cloth.ob.MC_props.start_frame
+    #ef = cloth.ob.MC_props.end_frame
+    #if (f >= sf) & (f <= ef):        
+    
+    nonexistent = not txt.exists()
+    print(cloth.co[:3])
+    if (nonexistent | ob.MC_props.overwrite_cache):
+        np.savetxt(txt, cloth.co)
+
+
+# Cache functions ---------------
+def play_cache(cloth, continuous=False):
+    """Load a text file of Nx3 numpy coords."""
+
+    ob = cloth.ob
+    print('running play cache')
+    
+    cache_interpolation(cloth) # Finish this !!!
+    
+    f = bpy.context.scene.frame_current
+    if continuous:
+        f = ob.MC_props.current_cache_frame
+        ob.MC_props['current_cache_frame'] = f + 1
+
+    fp = cloth.cache_dir
+
+    txt = fp.joinpath(str(f))
+    
+    print(txt)
+    
+    if txt.exists():
+        cloth.co = np.loadtxt(txt)
+    
+    key = 'MC_current'
+    # cache only playback
+    if ob.MC_props.cache_only:
+        key = 'cache_key'
+        if not ob.data.is_editmode:    
+            ob.data.shape_keys.key_blocks['cache_key'].data.foreach_set('co', cloth.co.ravel())
+            ob.data.update()
+            return
+        
+    if ob.data.is_editmode:
+        index = ob.data.shape_keys.key_blocks.find(key)
+        if ob.active_shape_key_index == index:
+            #cloth.obm = bmesh.from_edit_mesh(ob.data)
+            for i, j in enumerate(cloth.co):
+                cloth.obm.verts[i].co = j
+        print("line 193")
+        return
+
+    ob.data.shape_keys.key_blocks['MC_current'].data.foreach_set("co", cloth.co.ravel())
+    ob.data.update()
+    
 
 # debugging
 def T(type=1, message=''):
@@ -262,7 +383,7 @@ def get_co(ob, ar=None):
 
 # universal ---------------
 def co_overwrite(ob, ar):
-    """Fast way to overwite"""
+    """Fast way to overwrite"""
     ob.data.vertices.foreach_get('co', ar.ravel())
 
 
@@ -277,7 +398,7 @@ def get_co_shape(ob, key=None):
 
 # universal ---------------
 def key_overwrite(ob, ar, key):
-    """Fast way to overwite"""
+    """Fast way to overwrite"""
     ob.data.shape_keys.key_blocks[key].data.foreach_get('co', ar.ravel())
 
 
@@ -389,11 +510,11 @@ def reset_shapes(ob):
     keys = ob.data.shape_keys.key_blocks
     if 'MC_source' not in keys:
         ob.shape_key_add(name='MC_source')
-        keys['MC_source'].value=1
+        keys['MC_source'].value = 1.0
 
     if 'MC_current' not in keys:
         ob.shape_key_add(name='MC_current')
-        keys['MC_current'].value=1
+        keys['MC_current'].value = 1.0
         keys['MC_current'].relative_key = keys['MC_source']
 
 
@@ -427,14 +548,17 @@ def get_weights(ob, name, obm=None):
 
     g = ob.vertex_groups[name]
     for idx, v in enumerate(ob.data.vertices):
-        try:
-            w = g.weight(idx)
-            arr[idx] = w
-        except RuntimeError:
-            # Raised when the vertex is not part of the group
-            w = 0
-            ob.vertex_groups[name].add([g_idx, idx], w, 'REPLACE')
-            arr[idx] = w
+        ob.vertex_groups[name].add([g_idx, idx], 0.0, 'REPLACE')
+
+
+#        try:
+#            w = g.weight(idx)
+#            arr[idx] = w
+#        except RuntimeError:
+#            # Raised when the vertex is not part of the group
+#            w = 0
+#            ob.vertex_groups[name].add([g_idx, idx], w, 'REPLACE')
+#            arr[idx] = w
 
     return arr
 
@@ -477,14 +601,6 @@ def box_bary_weights(poly, point, vals=[]):
     v2 = np.nan_to_num(pa / ca)
     print(v1[2],v2[2])
     return [v1, v2]
-
-
-def eq_tri_bary_bend():
-    # get the axis
-    # get cpoe from tip to axis
-    # swap mag so tip dir with axis mag
-    # plot from mid of axis
-    
 
 
 # universal ---------------
@@ -958,13 +1074,24 @@ class Cloth(object):
 
 
 # cloth instance ---------------
-def create_instance():
+def create_instance(ob=None):
     """Run this when turning on modeling cloth."""
     cloth = Cloth()
     cloth.dg = bpy.context.evaluated_depsgraph_get()
-    ob = bpy.context.object
+    if ob is None:    
+        ob = bpy.context.object
     cloth.ob = ob
-
+    
+    if ob.MC_props.cache_only:
+        cloth.target = None
+        cloth.obm = get_bmesh(ob)
+        cloth.update_lookup = False
+        cloth.mode = 1
+        if ob.data.is_editmode:
+            cloth.mode = None
+        cloth.undo = False
+        cloth.selected = np.array([True, True], dtype=np.bool)
+        return cloth # don't calculate all this crap if we're just caching
 
     if False:
         # testng ----------------
@@ -995,7 +1122,7 @@ def create_instance():
     cloth.update_lookup = False
     cloth.selected = np.zeros(len(ob.data.vertices), dtype=np.bool)
     cloth.grab = np.zeros(len(ob.data.vertices), dtype=np.bool)
-        
+    cloth.current_cache_frame = 1 # for the cache continuous playback
         
     # surface follow data ------------------------------------------
     cloth.surface_tridex = None         # (index of tris in surface object)
@@ -1060,7 +1187,7 @@ def create_instance():
     cloth.bend_weights = None         # barycentric weights for placing tri tips
     cloth.bend_surface_offset = None  # distance along non-unit cross product from tris
     t = T()
-    # overwite all the None values
+    # overwrite all the None values
     get_bend_sets(cloth)
     T(t, "time it took to get the bend springs")
 
@@ -1365,7 +1492,6 @@ def seam_position(cloth, data):
     """Use a mix of means and linear springs
     to position triangles near seams"""
 
-    print('<<< position seams >>>')
     # setup initial positioning
     co = move_tris(cloth, data)
 
@@ -1710,7 +1836,6 @@ def spring_force(cloth):
     #cloth.velocity[:,2] += (grav * (-cloth.pin + 1).ravel())
 
 
-
 # update the cloth ---------------
 def cloth_physics(ob, cloth, collider):
     # can run in edit mode if I deal with looping through bmesh verts
@@ -1722,6 +1847,17 @@ def cloth_physics(ob, cloth, collider):
     #   given you can change both now I have to also include logic to
     #   decide who is boss if both are changed in different ways.
     #grav = np.array([0,0,-0.1])
+    if False:    
+        if ob.MC_props.cache_only:
+            if ob.MC_props.cache:
+                ob.update_from_editmode()
+                cloth.co = get_proxy_co(ob)
+                cache(cloth)
+                return
+            if ob.MC_props.play_cache:
+                play_cache(cloth, cloth.ob.MC_props.continuous)
+                return
+    
     if cloth.target is not None:
 
         # if target is deleted while still referenced by pointer property
@@ -1744,10 +1880,9 @@ def cloth_physics(ob, cloth, collider):
         else: # using else so it won't also run in edit mode
             pass
 
-    dynamic_source = True # can map this to a prop or turn it on and off automatically if use is in a mode that makes it relevant.
-    # If there is a target dynamic should prolly be on or if switching from active shape MC_source when in edit mode
-    if dynamic_source:
-        if cloth.target is not None:
+        dynamic_source = True # can map this to a prop or turn it on and off automatically if use is in a mode that makes it relevant.
+        # If there is a target dynamic should prolly be on or if switching from active shape MC_source when in edit mode
+        if dynamic_source:
             if not cloth.data.is_editmode: # can use bmesh prolly if not OBJECT mode.
                 dg = cloth.dg
                 if cloth.proxy is None:
@@ -1764,24 +1899,27 @@ def cloth_physics(ob, cloth, collider):
             return
         
         # if we switch to a different shape key in edit mode:
-        index = ob.data.shape_keys.key_blocks.find('MC_current')
-        if ob.active_shape_key_index != index:
-            cloth.update_lookup = True
-            cloth.ob.update_from_editmode()
-            bary_bend_springs(cloth)
-            cpoe_bend_plot_values(cloth)
-            return
+
+        if not cloth.ob.MC_props.cache_only:
+            index = ob.data.shape_keys.key_blocks.find('MC_current')            
+            if ob.active_shape_key_index != index:
+                cloth.update_lookup = True
+                cloth.ob.update_from_editmode()
+                bary_bend_springs(cloth)
+                cpoe_bend_plot_values(cloth)
+                print("line 1908")
+                return
 
         # bmesh gets removed when someone clicks on MC_current shape"
         try:
             cloth.obm.verts
         except:
             cloth.obm = get_bmesh(ob)
-
+            
         if cloth.update_lookup:
             cloth.obm.verts.ensure_lookup_table()
             cloth.update_lookup = False
-
+            
         # If we switched to edit mode or started in edit mode:
         if cloth.mode == 1 or cloth.undo:
             cloth.obm = get_bmesh(ob)
@@ -1793,38 +1931,40 @@ def cloth_physics(ob, cloth, collider):
         # detect changes in geometry and update
         if cloth.obm is None:
             cloth.obm = get_bmesh(ob)
-        same, faces = detect_changes(cloth.geometry, cloth.obm)
-        if faces: # zero faces in mesh do nothing
-            return
-        if not same:
-            # for pinning
-            print("DANGER!!!!!!!!!!!!!!!!!!")
-            print("DANGER!!!!!!!!!!!!!!!!!!")
-            print("DANGER!!!!!!!!!!!!!!!!!!")
-            print("DANGER!!!!!!!!!!!!!!!!!!")
-            print("DANGER!!!!!!!!!!!!!!!!!!")
-            print("DANGER!!!!!!!!!!!!!!!!!!")
-            np.copyto(cloth.pin_arr, cloth.co)
-            #cloth.springs, cloth.v_fancy, cloth.e_fancy, cloth.flip = get_springs(cloth, cloth.obm)
-            get_springs_2(cloth)
-            get_bend_sets(cloth)
-            cpoe_bend_plot_values(cloth)
-            cloth.geometry = get_mesh_counts(ob, cloth.obm)
-            # cloth.sew_springs = get_sew_springs() # build
-            cloth.obm.verts.ensure_lookup_table()
-            cloth.select_start = get_co_edit(None, cloth.obm)
-            cloth.co = np.array([v.co for v in cloth.obm.verts])
-            cloth.stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32)
-            cloth.selected = np.array([v.select for v in cloth.obm.verts])
+            
+        if not cloth.ob.MC_props.cache_only:
+            same, faces = detect_changes(cloth.geometry, cloth.obm)
+            if faces: # zero faces in mesh do nothing
+                return
+            if not same:
+                # for pinning
+                print("DANGER!!!!!!!!!!!!!!!!!!")
+                print("DANGER!!!!!!!!!!!!!!!!!!")
+                print("DANGER!!!!!!!!!!!!!!!!!!")
+                print("DANGER!!!!!!!!!!!!!!!!!!")
+                print("DANGER!!!!!!!!!!!!!!!!!!")
+                print("DANGER!!!!!!!!!!!!!!!!!!")
+                np.copyto(cloth.pin_arr, cloth.co)
+                #cloth.springs, cloth.v_fancy, cloth.e_fancy, cloth.flip = get_springs(cloth, cloth.obm)
+                get_springs_2(cloth)
+                get_bend_sets(cloth)
+                cpoe_bend_plot_values(cloth)
+                cloth.geometry = get_mesh_counts(ob, cloth.obm)
+                # cloth.sew_springs = get_sew_springs() # build
+                cloth.obm.verts.ensure_lookup_table()
+                cloth.select_start = get_co_edit(None, cloth.obm)
+                cloth.co = np.array([v.co for v in cloth.obm.verts])
+                cloth.stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32)
+                cloth.selected = np.array([v.select for v in cloth.obm.verts])
 
-            update_groups(cloth, cloth.obm, True)
-            cloth.ob.update_from_editmode()
-            cloth.obm.verts.ensure_lookup_table()
-        # updating the mesh coords -----------------@@
-        # detects user changes to the mesh like grabbing verts
-        #t = T()
-        
-        #T(t, "list comp")
+                update_groups(cloth, cloth.obm, True)
+                cloth.ob.update_from_editmode()
+                cloth.obm.verts.ensure_lookup_table()
+            # updating the mesh coords -----------------@@
+            # detects user changes to the mesh like grabbing verts
+            #t = T()
+            
+            #T(t, "list comp")
 
 
         cloth.ob.update_from_editmode()
@@ -1832,9 +1972,10 @@ def cloth_physics(ob, cloth, collider):
         #cloth.co = np.array([v.co for v in cloth.obm.verts])
         cloth.ob.data.shape_keys.key_blocks['MC_current'].data.foreach_get('co', cloth.co.ravel())
         
-        cloth.selected[:] = False
-        if bpy.context.scene.MC_props.pause_selected:
-            cloth.ob.data.vertices.foreach_get('select', cloth.selected)
+        if not cloth.ob.MC_props.cache_only:
+            cloth.selected[:] = False
+            if bpy.context.scene.MC_props.pause_selected:
+                cloth.ob.data.vertices.foreach_get('select', cloth.selected)
 
         if False: # detects all modal operators. Not very useful    
             M = False
@@ -1852,6 +1993,9 @@ def cloth_physics(ob, cloth, collider):
 
         """ =============== FORCES EDIT MODE ================ """
         # FORCES FORCES FORCES FORCES FORCES
+        if cloth.ob.MC_props.play_cache:
+            play_cache(cloth, cloth.ob.MC_props.continuous)
+            return
         
         for i in range(cloth.ob.MC_props.sub_frames):
             spring_basic(cloth)
@@ -1866,27 +2010,25 @@ def cloth_physics(ob, cloth, collider):
         # set coords to current edit mode bmesh
         for i, j in enumerate(cloth.co):
             cloth.obm.verts[i].co = j
-
+        
+        if cloth.ob.MC_props.cache:
+            cache(cloth)
+        
         return
 
-
+    # switched out of edit mode
     if cloth.mode is None:
-        # switched out of edit mode
-        #cloth.ob.update_from_editmode()
         cloth.mode = 1
-        #if False:    
-        #cloth.obm = bmesh.new()
-        #cloth.obm.from_mesh(cloth.ob.data)
-        update_groups(cloth, cloth.obm)
-
-        #cloth.vel_start = cloth.co
+        if not cloth.ob.MC_props.cache_only:    
+            update_groups(cloth, cloth.obm)
 
     # OBJECT MODE ====== :
-    #cloth.co = get_co_shape(cloth.ob, "MC_current")
-
-
     """ =============== FORCES OBJECT MODE ================ """
     # FORCES FORCES FORCES FORCES
+    if cloth.ob.MC_props.play_cache:
+        play_cache(cloth, cloth.ob.MC_props.continuous)
+        return
+    
     for i in range(cloth.ob.MC_props.sub_frames):
         spring_basic(cloth)
     # FORCES FORCES FORCES FORCES
@@ -1895,6 +2037,10 @@ def cloth_physics(ob, cloth, collider):
     # updating the mesh coords -----------------@@
     ob.data.shape_keys.key_blocks['MC_current'].data.foreach_set("co", cloth.co.ravel())
     cloth.ob.data.update()
+
+    if cloth.ob.MC_props.cache:
+        cache(cloth)
+
 
 
 # update the cloth ---------------
@@ -2093,7 +2239,6 @@ def cb_seam_wrangler(self, context):
     if not self.seam_wrangler:
         return
 
-
     MC_data['count'] = 0
     data = bpy.context.scene.seam_wrangler_data
 
@@ -2117,11 +2262,136 @@ def oops(self, context):
 
 # calback functions ---------------
 # object:
+def cb_cache_only(self, context):
+    
+    ob = self.id_data
+    
+    if self.cache_only:
+        self.cloth = True
+        self.cache = True
+        self.animated = True
+        self.cache_name = ob.name
+        return
+    
+    self.cache = False
+    self.cloth = False
+    self.animated = False
+
+def check_file_path(ob):
+    """Check if the current filepath is legit"""
+    self = ob.MC_props
+    custom = pa.Path(self.cache_folder)
+    mc_path = custom.joinpath('MC_cache_files')
+    name = self.cache_name
+    final_path = mc_path.joinpath(name)    
+    return final_path.exists()
+    
+
+def cb_cache(self, context):    
+    """Manage files and paths for saving cache."""
+    #if self.cache:
+        #self['play_cache'] = False
+        # decided we might want to overwrite while playing
+        #   back with partial influence and running cloth sim
+    
+    ob = self.id_data
+    cloth = get_cloth(ob)
+
+    # set path to blender path by default
+    path = bpy.data.filepath
+    if path == '':
+        path = bpy.app.binary_path    
+    mc_path = pa.Path(path).parent.joinpath('MC_cache_files')   
+    
+    # overwrite if user path is valid:
+    custom = pa.Path(self.cache_folder)
+    if not custom.exists():
+        # Report Error
+        msg = '"' + self.cache_folder + '"' + " is not a valid filepath. Switching to .blend location or blender.exe location if blend file is not saved"
+        bpy.context.window_manager.popup_menu(oops, title=msg, icon='ERROR')    
+        self['cache_folder'] = path    
+    else:
+        mc_path = custom.joinpath('MC_cache_files')
+    
+    # create dir if it doesn't exist
+    if not mc_path.exists():    
+        mc_path.mkdir()
+    
+    name = str(ob['MC_cloth_id'])
+    
+    custom_name = self.cache_name
+    if custom_name != "Mr. Purrkins The Deadly Cyborg Kitten":
+        if custom_name != '':
+            name = custom_name
+    
+    self['cache_name'] = name
+
+    final_path = mc_path.joinpath(name)
+
+    # create dir if it doesn't exist
+    if not final_path.exists():
+        final_path.mkdir()
+    
+    cloth.cache_dir = final_path
+    return
+
+
+def cb_cache_only_playback(self, context):
+    ob = self.id_data
+    cloth = get_cloth(ob)
+
+    if self.cache_only:
+        if self.play_cache:
+            self['cache'] = False
+            
+            if ob.data.shape_keys == None:
+                ob.shape_key_add(name='Basis')
+            
+            keys = ob.data.shape_keys.key_blocks
+            index = ob.data.shape_keys.key_blocks.find('MC_current')
+            active = ob.active_shape_key_index
+            cloth.key_values = {'MC_active_idx_pre_cache': active}
+            for k in keys:    
+                cloth.key_values[k.name] = k.value
+            
+            for k in keys:
+                k.value = 0
+            
+            keys = ob.data.shape_keys.key_blocks
+            if 'cache_key' not in keys:
+                ob.shape_key_add(name='cache_key')
+            
+            keys['cache_key'].value = 1.0
+            index = ob.data.shape_keys.key_blocks.find('cache_key')                
+            ob.active_shape_key_index = index    
+            return
+        
+        if ob.data.shape_keys is not None:
+            keys = ob.data.shape_keys.key_blocks
+            print(cloth.key_values)
+            print(cloth.key_values['MC_active_idx_pre_cache'])
+            if len(keys) >= cloth.key_values['MC_active_idx_pre_cache']:
+                ob.active_shape_key_index = cloth.key_values['MC_active_idx_pre_cache']
+
+            for k, v in cloth.key_values.items():
+                if k in keys:
+                    keys[k].value = v
+
+
+def cb_current_cache_frame(self, context):
+    """Keep track of the current saved cache frame."""
+    ob = MC_data['recent_object']
+    if ob is None:
+        ob = bpy.context.object
+    cloth = get_cloth(ob)
+    cloth.current_cache_frame = self.current_cache_frame
+    play_cache(cloth, continuous=True)
+    
 
 def cb_collider(self, context):
     """Set up object as collider"""
 
-    ob = bpy.context.object
+    ob = self.id_data
     if ob.type != "MESH":
         self['collider'] = False
 
@@ -2158,7 +2428,7 @@ def cb_collider(self, context):
 def cb_cloth(self, context):
     """Set up object as cloth"""
 
-    ob = bpy.context.object
+    ob = self.id_data
 
     # set the recent object for keeping settings active when selecting empties
     recent = MC_data['recent_object']
@@ -2182,7 +2452,6 @@ def cb_cloth(self, context):
         bpy.context.window_manager.popup_menu(oops, title=msg, icon='ERROR')
         return
 
-
     # The custom object id is the key to the cloth instance in MC_data
     if self.cloth:
         # creat shape keys and set current to active
@@ -2190,7 +2459,7 @@ def cb_cloth(self, context):
         index = ob.data.shape_keys.key_blocks.find('MC_current')
         ob.active_shape_key_index = index
 
-        cloth = create_instance()
+        cloth = create_instance(ob=ob)
 
         # recent_object allows cloth object in ui
         #   when selecting empties such as for pinning.
@@ -2202,9 +2471,13 @@ def cb_cloth(self, context):
         if len(d_keys) > 0:
             id_number = max(d_keys) + 1
             print("created new cloth id", id_number)
-
+        
+        #id_number = ob.name # Could create problems
+        id_number = time.time()
+        
         MC_data['cloths'][id_number] = cloth
         ob['MC_cloth_id'] = id_number
+        #cb_cache(self, context) # if a cache exists at the specified file location. So the usere doesn't have to toggle the property if the file is a valid cache.
         print('created instance')
         return
 
@@ -2261,15 +2534,26 @@ def cb_continuous(self, context):
 # object:
 def cb_animated(self, context):
     """Turn animated update on or off"""
-    install_handler(continuous=False)
-
-    # updates groups when we toggle "Animated"
-    ob = bpy.context.object
-    cloth = MC_data["cloths"][ob['MC_cloth_id']]
-    if ob.data.is_editmode:
-        cloth.co = np.array([v.co for v in cloth.obm.verts])
-        update_groups(cloth, cloth.obm)
+    install_handler(continuous=False) # deletes handler when false.
+    
+    if not self.animated:
         return
+    
+    # updates groups when we toggle "Animated"
+    ob = self.id_data
+    cloth = get_cloth(ob)
+    if self.cache_only:
+        cloth.co = get_proxy_co(ob)
+        return
+
+    if ob.data.is_editmode:
+        index = ob.data.shape_keys.key_blocks.find('MC_current')
+        if ob.active_shape_key_index == index:    
+            cloth.co = np.array([v.co for v in cloth.obm.verts], dtype=np.float32)
+            update_groups(cloth, cloth.obm)
+            return
+        ob.update_from_editmode()
+
     cloth.co = get_co_shape(ob, key='MC_current')
     update_groups(cloth, None)
 
@@ -2431,7 +2715,59 @@ class McPropsObject(bpy.types.PropertyGroup):
     # Edit Mode
     cloth_grab:\
     bpy.props.BoolProperty(name="Cloth Grab", description="Only move cloth during modal grab", default=False)
+    
+    # Cache
+    cache:\
+    bpy.props.BoolProperty(name="Cloth Cache", description='Cache animation when running "Animated" or "Continuous"', default=False, update=cb_cache)
 
+    cache_only:\
+    bpy.props.BoolProperty(name="Cache Only", description='Cache vertex coordinates for an evaluated mesh without generating cloth data', default=False, update=cb_cache_only)
+
+    overwrite_cache:\
+    bpy.props.BoolProperty(name="Overwrite Cache", description="Save over existing frames", default=False)
+    
+    cache_interpolation:\
+    bpy.props.BoolProperty(name="Cache Interpolate", description='Interpolate mesh shape between cached frames.', default=True, update=cb_cache)
+    
+    
+    # set the default path
+    path = bpy.data.filepath
+    if path == '':
+        path = bpy.app.binary_path    
+    mc_path = str(pa.Path(path).parent)#.joinpath('MC_cache_files')
+
+    cache_folder:\
+    bpy.props.StringProperty(name="Cache Folder", description="Directory for saving cache files", default=mc_path, update=cb_cache)
+
+    cache_name:\
+    bpy.props.StringProperty(name="Custom Name", description="Custom name for saving multiple cache files", default="Mr. Purrkins The Deadly Cyborg Kitten", update=cb_cache)
+
+    play_cache:\
+    bpy.props.BoolProperty(name="Play Cache", description="Play the cached animation", default=False, update=cb_cache_only_playback)
+
+    start_frame:\
+    bpy.props.IntProperty(name="Start Frame", description="Start cache on this frame", default=1)#, update=cb_cache)
+
+    end_frame:\
+    bpy.props.IntProperty(name="End Frame", description="End cache on this frame", default=250)#, update=cb_cache)
+
+    current_cache_frame:\
+    bpy.props.IntProperty(name="End Frame", description="End cache on this frame", default=1, update=cb_current_cache_frame)
+
+    cloth_off:\
+    bpy.props.BoolProperty(name="Cloth Off", description="Mesh Keyframe Only: No cloth behavior", default=False)#, update=cb_cache)
+
+    cache_force:\
+    bpy.props.FloatProperty(name="Cache Force", description="Target the cached value as a force", default=1.0, min=0, max=1, soft_min= -100, soft_max=100, precision=3)
+
+    # record
+    record:\
+    bpy.props.BoolProperty(name="Cloth Record", description="Record changes when 'Continuous'", default=False)
+
+    max_frames:\
+    bpy.props.IntProperty(name="Max Frames", description="Record this many", default=1000)#, update=cb_cache)
+              
+    
 
 # create properties ----------------
 # scene:
@@ -2613,6 +2949,123 @@ class MCSewToSurface(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# !!! can't undo delete cache or keyframe.
+class MCDeleteCache(bpy.types.Operator):
+    """Delete cache folder for current object"""
+    bl_idname = "object.mc_delete_cache"
+    bl_label = "Really delete this folder and its contents?"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    
+    def __init__(self):
+        print("ran this class method thingy")        
+    #print(self.name, "does this print?????????")
+    #@classmethod
+
+
+
+        ob = MC_data['recent_object']
+        if ob is None:
+            ob = bpy.context.object
+        
+        if ob.MC_props.cloth:    
+            cloth = MC_data['cloths'][ob['MC_cloth_id']]
+            
+            path = pa.Path(ob.MC_props.cache_folder).joinpath('MC_cache_files')
+            current = path.joinpath(ob.MC_props.cache_name)
+            
+        msg = 'Really delete ' + str(current) + ' and its contents?'
+        self.bl_label = msg
+        #return self.bl_label
+    
+    #    bpy.context.window_manager.popup_menu(oops, title=msg, icon='ERROR')        
+        
+    
+    #label()
+    
+    @classmethod
+    def poll(cls, context):
+        return True
+
+
+    def invoke(self, context, event):
+        self.bl_label = "Object: {0}".format(context.active_object.name)
+        #print("does this ever happen??????")
+        return context.window_manager.invoke_confirm(self, event)
+
+    
+    def execute(self, context):
+        #self.report({'INFO'}, "YES I really want to do this!")
+        
+
+        #self.bl_label = "Really delete " + str(current) + " and its contents?"
+        
+        
+        ob = MC_data['recent_object']
+        if ob is None:
+            ob = bpy.context.object
+        cloth = MC_data['cloths'][ob['MC_cloth_id']]
+        
+        path = pa.Path(ob.MC_props.cache_folder).joinpath('MC_cache_files')
+        current = path.joinpath(ob.MC_props.cache_name)
+        
+        if os.path.exists(current):    
+            shutil.rmtree(current, ignore_errors=True)
+            ob.MC_props['cache'] = False
+            
+            msg = 'Deleted ' + str(current) + ' and its contents.'
+            bpy.context.window_manager.popup_menu(oops, title=msg, icon='ERROR')        
+        
+            
+            return {'FINISHED'}
+
+        msg = 'Could not delete ' + str(current) + '. No such file'
+        bpy.context.window_manager.popup_menu(oops, title=msg, icon='ERROR')        
+        
+        return {'FINISHED'}        
+    
+
+
+
+
+
+
+class MCCreateMeshKeyframe(bpy.types.Operator):
+    """Create a linear path between cache files"""
+    bl_idname = "object.mc_mesh_keyframe"
+    bl_label = "MC Create Mesh Keyframe"
+    bl_options = {'REGISTER', 'UNDO'}
+    def execute(self, context):
+        ob = MC_data['recent_object']
+        if ob is None:
+            ob = bpy.context.object
+        cloth = MC_data['cloths'][ob['MC_cloth_id']]
+        print("Will create mesh cache keyframe... Some day. Sigh...")
+        cloth.co = get_co_mode(ob)
+        overwrite = ob.MC_props.overwrite_cache
+        ob.MC_props.overwrite_cache = True
+        cache(cloth, keying=True)
+        ob.MC_props.overwrite_cache = overwrite
+        
+        
+        return {'FINISHED'}
+
+
+class MCRemoveMeshKeyframe(bpy.types.Operator):
+    """Remove mesh keyframe at current frame"""
+    bl_idname = "object.mc_remove_keyframe"
+    bl_label = "MC Remove Mesh Keyframe"
+    bl_options = {'REGISTER', 'UNDO'}
+    def execute(self, context):
+        ob = MC_data['recent_object']
+        if ob is None:
+            ob = bpy.context.object
+        cloth = MC_data['cloths'][ob['MC_cloth_id']]
+        print("Will remove mesh cache keyframe... Some day. Sigh...")
+
+        return {'FINISHED'}
+
+
 class MCCreateVirtualSprings(bpy.types.Operator):
     """Create Virtual Springs Between Selected Verts"""
     bl_idname = "object.mc_create_virtual_springs"
@@ -2693,10 +3146,19 @@ class PANEL_PT_MC_Master(bpy.types.Panel):
             if MC_data['recent_object'] is None:
                 return False
             ob = MC_data['recent_object']
+
+        try: # if we delete the object then grab an empty
+            ob.name
+        except:
+            print("Cloth object was deleted")
+            MC_data['recent_object'] = None
+            return False
+
         return True
 
     def __init__(self):
         ob = bpy.context.object
+        
         if ob.type != 'MESH':
             ob = MC_data['recent_object']
 
@@ -2715,11 +3177,13 @@ class PANEL_PT_modelingClothMain(PANEL_PT_MC_Master, bpy.types.Panel):
 
     def draw(self, context):
         sc = bpy.context.scene
+        ob = self.ob
         layout = self.layout
         col = layout.column(align=True)
         col.prop(sc.MC_props, "kill_duplicator", text="kill_duplicator", icon='DUPLICATE')
+        col.prop(ob.MC_props, "cache_only", text="Cache Only", icon='RENDER_ANIMATION')
         # use current mesh or most recent cloth object if current ob isn't mesh
-        ob = self.ob
+
 
         # if we select a new mesh object we want it to display
 
@@ -2735,7 +3199,6 @@ class PANEL_PT_modelingClothMain(PANEL_PT_MC_Master, bpy.types.Panel):
             #if self.mesh:
             col.label(text='Update Mode')
             col = layout.column(align=True)
-            #col.scale_y = 1
             row = col.row()
             row.scale_y = 2
             row.prop(ob.MC_props, "animated", text="Animated", icon='PLAY')
@@ -2754,6 +3217,104 @@ class PANEL_PT_modelingClothMain(PANEL_PT_MC_Master, bpy.types.Panel):
             col.use_property_decorate = True
             col.label(text='Target Object')
             col.prop(ob.MC_props, "target", text="", icon='DUPLICATE')
+
+
+# CACHE PANEL
+class PANEL_PT_modelingClothCache(PANEL_PT_MC_Master, bpy.types.Panel):
+    """Modeling Cloth Cache"""
+    bl_label = "MC Cache"
+    bl_idname = "PANEL_PT_modeling_cloth_cache"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Extended Tools"
+
+    def draw(self, context):
+        sc = bpy.context.scene
+        layout = self.layout
+        col = layout.column(align=True)
+        ob = self.ob
+        
+        if ob.MC_props.cloth:
+            cloth = get_cloth(ob)
+
+            col = layout.column(align=True)
+            box = col.box()
+            bcol = box.column()
+
+            bcol.prop(ob.MC_props, "cache", text="Record", icon='RENDER_ANIMATION')
+            bcol.prop(ob.MC_props, "max_frames")
+            bcol.prop(ob.MC_props, "overwrite_cache", text="Overwrite", icon='FILE_REFRESH')
+            bcol = box.column()
+            bcol.scale_y = 1.5
+            bcol.operator('object.mc_delete_cache', text="Delete Cache", icon='KEY_HLT')
+            bcol = box.column()
+            bcol.label(text="Cache Foder")
+            bcol.prop(ob.MC_props, "cache_folder", text="")
+            bcol.label(text="Custom Name")
+            bcol.prop(ob.MC_props, "cache_name", text="")
+            
+            #col.separator()
+            bcol = col.box().column()
+
+            bcol.label(text='Animate Mode')            
+            
+            #bcol.enabled = hasattr(cloth, 'cache_dir')
+            bcol.enabled = check_file_path(ob)
+            
+            bcol.prop(ob.MC_props, 'play_cache', text='Playback', icon='PLAY')
+            bcol.prop(ob.MC_props, 'cache_force', text='Influence', icon='SNAP_ON')
+            bcol.prop(ob.MC_props, 'current_cache_frame', text='Frame')#, icon='SNAP_ON')
+
+
+
+            #row = bcol.row()
+            #row.prop(ob.MC_props, "start_frame", text="")
+            #row.prop(ob.MC_props, "end_frame", text="")
+            #bcol.label(text='Continuous Mode')
+            #bcol.prop(ob.MC_props, "record", text="Record", icon='REC')
+
+
+
+
+            folder = 'Cach=None'
+            if hasattr(cloth, 'cache_dir'):
+                fo = cloth.cache_dir
+                if os.path.exists(fo):
+                    folder = fo
+
+            col.separator()
+            box = col.box().column()
+            box.label(text='Mesh Keyframing')
+            box.prop(ob.MC_props, 'cloth_off', text='Cloth Off', icon='CANCEL')
+
+            box.separator()
+
+            frame = 'Key=None'
+
+            if hasattr(cloth, 'cache_dir'):
+                folder = cloth.cache_dir
+                if folder.exists():
+                    f = str(folder) + str(sc.frame_current)
+                    if os.path.exists(f):
+                        frame = 'Key=' + str(sc.frame_current)
+            
+
+            box.operator('object.mc_mesh_keyframe', text="Keyframe Mesh", icon='KEY_HLT')
+            box.label(text=frame)
+            box.operator('object.mc_remove_keyframe', text="Del Keyframe", icon='KEY_DEHLT')
+
+
+            
+            #col.separator()
+            #box = col.box().column()
+            #box.label(text='Record Continuous')
+            #box.prop(ob.MC_props, "record", text="Record", icon='REC')
+            #box.prop(ob.MC_props, "max_frames")
+            #col.separator()
+            #box = col.box().column()
+            #box.label(text='Playback Mode')
+            #box.prop(ob.MC_props, 'play_cache', text='Playback', icon='PLAY')
+            #box.prop(ob.MC_props, 'cache_force', text='Influence', icon='SNAP_ON')
 
 
 # SEWING PANEL
@@ -2953,7 +3514,11 @@ classes = (
     MCCreateSewLines,
     MCSewToSurface,
     MCCreateVirtualSprings,
+    MCDeleteCache,
+    MCCreateMeshKeyframe,
+    MCRemoveMeshKeyframe,
     PANEL_PT_modelingClothMain,
+    PANEL_PT_modelingClothCache,
     PANEL_PT_modelingClothSettings,
     PANEL_PT_modelingClothSewing,
     PANEL_PT_modelingClothVertexGroups,
