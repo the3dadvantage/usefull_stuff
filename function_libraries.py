@@ -1,3 +1,24 @@
+def read_python_script(name=None):
+    import bpy
+    import inspect
+    import pathlib
+    """When this runs it makes a copy of itself
+    and saves it to the blend file"""
+
+    p_ = pathlib.Path(inspect.getfile(inspect.currentframe()))
+    py = p_.parts[-1]
+    p = p_.parent.parent.joinpath(py)
+    o = open(p)
+    
+    if name is None:
+        name = 'new_' + py
+        
+    new = bpy.data.texts.new(name)
+    
+    r = o.read()
+    new.write(r)
+
+
 def cross_from_tris(tris):
     origins = tris[:, 0]
     vecs = tris[:, 1:] - origins[:, nax]
