@@ -26,7 +26,8 @@ try:
     from bpy.app.handlers import persistent
     import os
     import shutil
-    import pathlib as pa
+    import pathlib
+    import inspect
     import bmesh
     import functools as funky
     import numpy as np
@@ -94,6 +95,24 @@ def get_proxy_co(ob, co=None):
     proxy.vertices.foreach_get('co', co.ravel())
     ob.to_mesh_clear()
     return co
+
+
+def read_python_script(name=None):
+    """When this runs it makes a copy of this script
+    and saves it to the blend file as a text"""
+
+    p_ = pathlib.Path(inspect.getfile(inspect.currentframe()))
+    py = p_.parts[-1]
+    p = p_.parent.parent.joinpath(py)
+    o = open(p)
+    
+    if name is None:
+        name = 'new_' + py
+        
+    new = bpy.data.texts.new(name)
+    
+    r = o.read()
+    new.write(r)
 
 
 # developer functions ------------------------
@@ -2103,7 +2122,8 @@ def cb_seam_wrangler(self, context):
     iters = data['run_frames']
     for i in range(iters):
         spring_basic(cloth)
-
+    
+    cache(cloth, keying=False)
     ob.data.shape_keys.key_blocks['MC_current'].data.foreach_set("co", cloth.co.ravel())
     #ob.data.vertices.foreach_set('co', cloth.co.ravel())
     ob.data.update()
@@ -2134,7 +2154,7 @@ def cb_cache_only(self, context):
 def check_file_path(ob):
     """Check if the current filepath is legit"""
     self = ob.MC_props
-    custom = pa.Path(self.cache_folder)
+    custom = pathlib.Path(self.cache_folder)
     mc_path = custom.joinpath('MC_cache_files')
     name = self.cache_name
     final_path = mc_path.joinpath(name)    
@@ -2156,10 +2176,10 @@ def cb_cache(self, context):
     path = bpy.data.filepath
     if path == '':
         path = bpy.app.binary_path    
-    mc_path = pa.Path(path).parent.joinpath('MC_cache_files')   
+    mc_path = pathlib.Path(path).parent.joinpath('MC_cache_files')   
     
     # overwrite if user path is valid:
-    custom = pa.Path(self.cache_folder)
+    custom = pathlib.Path(self.cache_folder)
     if not custom.exists():
         # Report Error
         msg = '"' + self.cache_folder + '"' + " is not a valid filepath. Switching to .blend location or blender.exe location if blend file is not saved"
@@ -2573,7 +2593,7 @@ class McPropsObject(bpy.types.PropertyGroup):
     path = bpy.data.filepath
     if path == '':
         path = bpy.app.binary_path    
-    mc_path = str(pa.Path(path).parent)#.joinpath('MC_cache_files')
+    mc_path = str(pathlib.Path(path).parent)#.joinpath('MC_cache_files')
 
     cache_folder:\
     bpy.props.StringProperty(name="Cache Folder", description="Directory for saving cache files", default=mc_path, update=cb_cache)
@@ -2806,7 +2826,7 @@ class MCDeleteCache(bpy.types.Operator):
         if ob.MC_props.cloth:    
             cloth = MC_data['cloths'][ob['MC_cloth_id']]
             
-            path = pa.Path(ob.MC_props.cache_folder).joinpath('MC_cache_files')
+            path = pathlib.Path(ob.MC_props.cache_folder).joinpath('MC_cache_files')
             current = path.joinpath(ob.MC_props.cache_name)
 
         msg = 'Really delete ' + str(current) + ' and its contents?'
@@ -2827,7 +2847,7 @@ class MCDeleteCache(bpy.types.Operator):
             ob = bpy.context.object
         cloth = MC_data['cloths'][ob['MC_cloth_id']]
         
-        path = pa.Path(ob.MC_props.cache_folder).joinpath('MC_cache_files')
+        path = pathlib.Path(ob.MC_props.cache_folder).joinpath('MC_cache_files')
         current = path.joinpath(ob.MC_props.cache_name)
         
         if os.path.exists(current):    
