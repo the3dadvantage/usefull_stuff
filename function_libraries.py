@@ -2,13 +2,17 @@ def read_python_script(name=None):
     import bpy
     import inspect
     import pathlib
-    """When this runs it makes a copy of itself
-    and saves it to the blend file"""
+    """When this runs it makes a copy of this script
+    and saves it to the blend file as a text"""
 
     p_ = pathlib.Path(inspect.getfile(inspect.currentframe()))
     py = p_.parts[-1]
     p = p_.parent.parent.joinpath(py)
-    o = open(p)
+    try:    
+        o = open(p)
+    except:
+        p = p_.parent.joinpath(py) # linux or p1 (not sure why this is happening in p1)
+        o = open(p)
     
     if name is None:
         name = 'new_' + py
