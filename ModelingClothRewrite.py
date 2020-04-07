@@ -1509,17 +1509,16 @@ def seam_position(cloth, data):
 def seam_updater(cloth, data):
     # overwrite co
     ob = data['ob']
-    
+
     use_key = False
     if ob.data.shape_keys is not None:
-        
-        keys = [i.name for i in keys if i.value == 1]
-        if len(keys) > 0:
-            cloth_key = keys[-1]
+        keys = ob.data.shape_keys.key_blocks
+        names = [i.name for i in keys if i.value == 1]
+        if len(names) > 0:
+            cloth_key = names[-1]
             use_key = True
 
     get_proxy_co(ob, data['cloth_co'])
-
 
     print('=== seam updater ===')
     # manage_seams
@@ -1540,15 +1539,15 @@ def seam_updater(cloth, data):
     vecs = (plot - data['cloth_co'][data['vps']]) * data['tri_influence']
 
     data['cloth_co'][data['vps']] += vecs
-        
-    if use_key:    
-        ob.data.shape_keys.key_blocks[key].data.foreach_set('co', data['cloth_co'].ravel())
+
+    if use_key:
+        ob.data.shape_keys.key_blocks[cloth_key].data.foreach_set('co', data['cloth_co'].ravel())
         ob.data.update()
         return
 
     ob.data.vertices.foreach_set('co', data['cloth_co'].ravel())
-    ob.data.update()    
-        
+    ob.data.update()
+
 # ^                                                          ^ #
 # ^               END seam wrangler functions                ^ #
 # ============================================================ #
