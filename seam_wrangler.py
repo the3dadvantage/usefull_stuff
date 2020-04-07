@@ -221,11 +221,16 @@ def slice_setup(Slice, cloth_key=None): # !!! set testing to False !!!
 
     ob = Slice.ob
 
+    Slice.cloth_key = None
+
     # get the name of the cloth state shape key (numbers will vary)
     if cloth_key is None:
-        keys = ob.data.shape_keys.key_blocks
-        cloth_key = [i.name for i in keys if i.value == 1][-1]
-    Slice.cloth_key = cloth_key
+        if ob.data.shape_keys is not None:
+            keys = ob.data.shape_keys.key_blocks
+            names = [i.name for i in keys if i.value == 1]
+            if len(names) > 0:
+                Slice.cloth_key = names[-1]
+
 
     # flat shape coords or mesh coords if there is no flat shape key
     flat_key = False
@@ -235,12 +240,12 @@ def slice_setup(Slice, cloth_key=None): # !!! set testing to False !!!
         if 'flat' in ob.data.shape_keys.key_blocks:
             flat_co = get_co_shape(ob, 'flat')
             flat_key = True
-    
+
     if not flat_key:
         vc = len(ob.data.vertices)
         flat_co = np.empty((vc, 3), dtype=np.float32)
         ob.data.vertices.foreach_get('co', flat_co.ravel())
-    
+
     Slice.flat_co = flat_co
 
     # cloth shape coords
@@ -1014,20 +1019,20 @@ def seam_manager(Bobj=None, frames=None, kill_frame=None, settings=None, cloth_k
         keys = ob.data.shape_keys
         if keys is None:
             print('No active shape key for seam manager')
-            return
+            #return
 
         keys = keys.key_blocks
         active_keys = [i.name for i in keys if i.value == 1]
         if len(active_keys) == 0:
             print('No active shape key for seam manager')
             print('key list: ', active_keys)
-            return
+            #return
 
         if f in hd['frames']:
-            if bpy.context.scene.frame_current % 2 == 0:
+            if bpy.context.scene.frame_current % 1 == 0:
                 if 'pidx' in hd:
                     for v in hd['data']['vps'].tolist():
-                        ob.vertex_groups['SW_seam_pin'].add([hd['pidx'], v], 1.0, 'REPLACE')
+                        ob.vertex_groups['SW_seam_pin'].add([hd['pidx'], v], 0.0, 'REPLACE')
 
             sc = len(hd['settings'])
             if sc == 0:
@@ -1039,10 +1044,12 @@ def seam_manager(Bobj=None, frames=None, kill_frame=None, settings=None, cloth_k
 
             manage_seams(ob, cloth_key, hd, settings=settings, test_val=None, debug=None)
             hd['count'] += 1
-            pidx = ob.vertex_groups['SW_seam_pin'].index
-            if (bpy.context.scene.frame_current + 1) % 2 == 0:
-                for v in hd['data']['vps'].tolist():
-                    ob.vertex_groups['SW_seam_pin'].add([pidx, v], 0.0, 'REPLACE')
+
+            if False:
+                pidx = ob.vertex_groups['SW_seam_pin'].index
+                if (bpy.context.scene.frame_current + 1) % 2 == 0:
+                    for v in hd['data']['vps'].tolist():
+                        ob.vertex_groups['SW_seam_pin'].add([pidx, v], 0.0, 'REPLACE')
 
         if f == hd['kill_frame']:
             # clean dead versions of the animated handler
