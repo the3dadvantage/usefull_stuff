@@ -126,10 +126,39 @@ print("new--------------------------------------")
 
 def cache_interpolation(cloth):
     # !!! have to finish this one
+    # Might as well throw in the ability to scale the
+    #   cache up and down.
+    #   Compute on playback so we don't screw with the files
+
     ob = cloth.ob
     f = ob.MC_props.current_cache_frame
     fp = cloth.cache_dir
     idx = np.array([int(i.parts[-1]) for i in fp.iterdir()])
+
+
+def cache_only(ob):
+
+    self = ob.MC_props
+
+    path = os.path.expanduser("~/Desktop")
+    self['cache_folder'] = path
+    mc_path = pathlib.Path(path).joinpath('MC_cache_files')
+
+    if not mc_path.exists():
+        mc_path.mkdir()
+
+    final_path = mc_path.joinpath(ob.name)
+    self['cache_name'] = ob.name
+    final_path = mc_path.joinpath(ob.name)
+
+    # create dir if it doesn't exist
+    if not final_path.exists():
+        final_path.mkdir()
+
+    f = bpy.context.scene.frame_current
+    txt = final_path.joinpath(str(f))
+
+    np.savetxt(txt, get_proxy_co(ob))
 
 
 # Cache functions ---------------
@@ -181,14 +210,14 @@ def play_cache(cloth, cb=False):
     cache_interpolation(cloth) # Finish this !!!
 
     f = bpy.context.scene.frame_current
-    
+
     if ob.MC_props.continuous:
         f = ob.MC_props.current_cache_frame
         ob.MC_props['current_cache_frame'] = f + 1
 
     if cb: # when running the callback
         f = ob.MC_props.current_cache_frame
-    
+
     fp = cloth.cache_dir
 
     txt = fp.joinpath(str(f))
@@ -208,13 +237,13 @@ def play_cache(cloth, cb=False):
     if ob.data.is_editmode:
         index = ob.data.shape_keys.key_blocks.find(key)
         if ob.active_shape_key_index == index:
-            
+
             try:
-                cloth.obm.verts    
-            except:    
+                cloth.obm.verts
+            except:
                 print("updated cloth.obm")
                 cloth.obm = bmesh.from_edit_mesh(ob.data)
-            
+
             for i, j in enumerate(cloth.co):
                 cloth.obm.verts[i].co = j
         return
@@ -1417,7 +1446,7 @@ def pure_linear(cloth, data):
         # current vec, dot, length
         cv = co[rs] - cloth.co[ls]
         cd = np.einsum("ij ,ij->i", cv, cv)
-        cl = np.nan_to_num(np.sqrt(cd))
+        cl = np.sqrt(cd)
 
         move_l = (cl - l) * stretch
 
@@ -1425,13 +1454,13 @@ def pure_linear(cloth, data):
         data['stretch_array'][:] = 0.0
         rock_hard_abs = np.abs(move_l)
         np.add.at(data['stretch_array'], ls, rock_hard_abs)
-        weights = np.nan_to_num(rock_hard_abs / data['stretch_array'][ls])
+        weights = rock_hard_abs / data['stretch_array'][ls]
         # mean method -------------------
 
         # apply forces ------------------
-        move = cv * (np.nan_to_num(move_l / cl)[:,None])
+        move = cv * (move_l / cl)[:,None]
         move *= weights[:,None]
-        np.add.at(cloth.co, ls, move)
+        np.add.at(cloth.co, ls, np.nan_to_num(move))
         #print(np.any(np.isnan(weights)), "nanny here")
 
 
@@ -1669,15 +1698,15 @@ def spring_basic(cloth):
 
             rock_hard_abs = np.abs(move_l)
             np.add.at(cloth.stretch_array, cloth.basic_v_fancy, rock_hard_abs)
-            weights = np.nan_to_num(rock_hard_abs / cloth.stretch_array[cloth.basic_v_fancy])
+            weights = rock_hard_abs / cloth.stretch_array[cloth.basic_v_fancy]
             # mean method -------------------
 
             # apply forces ------------------
             #if False:
-            move = cv * (np.nan_to_num(move_l / cl)[:,None])
+            move = cv * (move_l / cl)[:,None]
 
             move *= weights[:,None]
-            np.add.at(cloth.co, cloth.basic_v_fancy, move)
+            np.add.at(cloth.co, cloth.basic_v_fancy, np.nan_to_num(move))
 
             if cloth.ob.MC_props.bend > 0:
                 # test ====================== bend springs
@@ -2169,7 +2198,7 @@ def cb_cache_only(self, context):
 
     if self.cache_only:
         self.cloth = True
-        self.cache = True
+        #self.cache = True
         self.animated = True
         self.cache_name = ob.name
         return
@@ -2213,7 +2242,7 @@ def cb_cache(self, context):
     if path == '':
         path = os.path.expanduser("~/Desktop")
         self['cache_folder'] = path
-        
+
     if ob.MC_props.cache_desktop:
         path = os.path.expanduser("~/Desktop")
         self['cache_folder'] = path
@@ -2303,7 +2332,7 @@ def cb_cache_playback(self, context):
 def cb_current_cache_frame(self, context):
     """Keep track of the current saved cache frame."""
     ob = self.id_data
-            
+
     cloth = get_cloth(ob)
     cloth.cache_dir = check_file_path(ob)[1]
     cloth.current_cache_frame = self.current_cache_frame
@@ -2635,7 +2664,7 @@ class McPropsObject(bpy.types.PropertyGroup):
     path = bpy.data.filepath
     if path == '':
         path = os.path.expanduser("~/Desktop")
-    
+
     mc_path = str(pathlib.Path(path).parent)#.joinpath('MC_cache_files')
 
     cache_folder:\
@@ -3137,7 +3166,7 @@ class PANEL_PT_modelingClothCache(PANEL_PT_MC_Master, bpy.types.Panel):
             bcol.label(text="Custom Name")
             bcol.prop(ob.MC_props, "cache_name", text="")
             bcol.prop(ob.MC_props, "cache_desktop", text="Use Desktop")
-                        
+
             #col.separator()
             bcol = col.box().column()
 
@@ -3463,4 +3492,3 @@ def unregister():
 
 if __name__ == '__main__':
     register()
-
