@@ -227,8 +227,20 @@ def slice_setup(Slice, cloth_key=None): # !!! set testing to False !!!
         cloth_key = [i.name for i in keys if i.value == 1][-1]
     Slice.cloth_key = cloth_key
 
-    # flat shape coords
-    flat_co = get_co_shape(ob, 'flat')
+    # flat shape coords or mesh coords if there is no flat shape key
+    flat_key = False
+
+    if ob.data.shape_keys is not None:
+        no_key = True
+        if 'flat' in ob.data.shape_keys.key_blocks:
+            flat_co = get_co_shape(ob, 'flat')
+            flat_key = True
+    
+    if not flat_key:
+        vc = len(ob.data.vertices)
+        flat_co = np.empty((vc, 3), dtype=np.float32)
+        ob.data.vertices.foreach_get('co', flat_co.ravel())
+    
     Slice.flat_co = flat_co
 
     # cloth shape coords
