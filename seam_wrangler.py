@@ -85,6 +85,18 @@ def get_proxy_co(ob, co=None):
     return co
 
 
+def sw_shapes(ob):
+    """Create shape keys if they are missing"""
+
+    if ob.data.shape_keys == None:
+        ob.shape_key_add(name='Basis')
+
+    keys = ob.data.shape_keys.key_blocks
+    if 'sw_view' not in keys:
+        ob.shape_key_add(name='sw_view')
+        keys['sw_view'].value=1
+
+
 def reset_shapes(ob):
     """Create shape keys if they are missing"""
 
@@ -227,7 +239,7 @@ def slice_setup(Slice, cloth_key=None): # !!! set testing to False !!!
     if cloth_key is None:
         if ob.data.shape_keys is not None:
             keys = ob.data.shape_keys.key_blocks
-            names = [i.name for i in keys if i.value == 1]
+            names = [i.name for i in keys if (i.name != 'sw_view' & i.value == 1)]
             if len(names) > 0:
                 Slice.cloth_key = names[-1]
 
@@ -1001,6 +1013,8 @@ def seam_manager(Bobj=None, frames=None, kill_frame=None, settings=None, cloth_k
 
     hd['settings'] = settings
 
+    sw_shapes(Bobj) # add 'sw_view' to shape keys and set value to 1
+
     # the function that runs every frame
     def seam_wrangler_anim(scene):
         active_object = bpy.context.object
@@ -1022,9 +1036,9 @@ def seam_manager(Bobj=None, frames=None, kill_frame=None, settings=None, cloth_k
             #return
 
         keys = keys.key_blocks
-        active_keys = [i.name for i in keys if i.value == 1]
+        active_keys = [i.name for i in keys if (i.name != 'sw_view' & i.value == 1)]
         if len(active_keys) == 0:
-            print('No active shape key for seam manager')
+            print('No active shape key for seam manager. Using sw_view key')
             print('key list: ', active_keys)
             #return
 
@@ -1032,7 +1046,7 @@ def seam_manager(Bobj=None, frames=None, kill_frame=None, settings=None, cloth_k
             if bpy.context.scene.frame_current % 1 == 0:
                 if 'pidx' in hd:
                     for v in hd['data']['vps'].tolist():
-                        ob.vertex_groups['SW_seam_pin'].add([hd['pidx'], v], 0.0, 'REPLACE')
+                        ob.vertex_groups['SW_seam_pin'].add([hd['pidx'], v], 0.3, 'REPLACE')
 
             sc = len(hd['settings'])
             if sc == 0:
