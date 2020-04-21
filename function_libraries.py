@@ -1,3 +1,15 @@
+def eliminate_duplicate_pairs(ar):
+    """Eliminates duplicates and mirror duplicates.
+    for example, [1,4], [4,1] or duplicate occurrences of [1,4]
+    Returns an Nx2 array."""
+    # no idea how this works (probably sorcery) but it's really fast
+    a = np.sort(ar, axis=1)
+    x = np.random.rand(a.shape[1])
+    y = a @ x
+    unique, index = np.unique(y, return_index=True)
+    return a[index]
+
+
 def read_python_script(name=None):
     import bpy
     import inspect
