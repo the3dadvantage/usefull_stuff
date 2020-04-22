@@ -1,3 +1,126 @@
+
+# ---------------------three functions below------------------------------- <<
+def tree(co, margin=0.001, _idx=None):
+    
+    # could test dividing up the world instead of dividing boxes
+    b_min = np.min(co, axis=0)
+    b_max = np.max(co, axis=0)
+    mid = b_min + ((b_max - b_min) / 2)
+
+    bpy.data.objects['a'].location = mid
+    # l = left, r = right, f = front, b = back, u = up, d = down
+    idx = np.arange(co.shape[0], dtype=np.int32)
+    boxes = []
+
+    # -------------------------------
+    B = co[:,0] < mid[0] + margin
+    il = idx[B]
+
+    B = co[:,0] > mid[0] - margin
+    ir = idx[B]
+
+    # ------------------------------
+    cil = co[:,1][il]
+    B = cil > mid[1] - margin
+    ilf = il[B]
+
+    B = cil < mid[1] + margin
+    ilb = il[B]
+
+    cir = co[:,1][ir]
+    B = cir > mid[1] - margin
+    irf = ir[B]
+
+    B = cir < mid[1] + margin
+    irb = ir[B]
+
+    # ------------------------------
+    cilf = co[:,2][ilf]
+    B = cilf > mid[2] - margin
+    ilfu = ilf[B]
+    B = cilf < mid[2] + margin
+    ilfd = ilf[B]
+
+    cilb = co[:,2][ilb]
+    B = cilb > mid[2] - margin
+    ilbu = ilb[B]
+    B = cilb < mid[2] + margin
+    ilbd = ilb[B]
+
+    cirf = co[:,2][irf]
+    B = cirf > mid[2] - margin
+    irfu = irf[B]
+    B = cirf < mid[2] + margin
+    irfd = irf[B]
+
+    cirb = co[:,2][irb]
+    B = cirb > mid[2] - margin
+    irbu = irb[B]
+    B = cirb < mid[2] + margin
+    irbd = irb[B]
+    
+    if _idx is None:
+        boxes = [ilfu, ilfd, ilbu, ilbd, irfu, irfd, irbu, irbd]
+        doubles = [i for i in boxes if i.shape[0] > 1]
+            #return #[i.tolist() for i in boxes]
+        return doubles
+    
+    boxes = [_idx[ilfu],
+             _idx[ilfd],
+             _idx[ilbu],
+             _idx[ilbd],
+             _idx[irfu],
+             _idx[irfd],
+             _idx[irbu],
+             _idx[irbd]
+             ]
+    
+    doubles = [i for i in boxes if i.shape[0] > 1]
+    return doubles
+
+
+def branches(co, margin):
+    """Subsets of trees"""
+    boxes = []
+    b1 = tree(co, margin=margin)
+    for i in b1:
+        b2 = tree(co[i], margin=margin, _idx=i)
+        for j in b2:
+            b3 = tree(co[j], margin=margin, _idx=j)
+            boxes += b3
+
+    return boxes
+    
+
+def find_doubles(ob, margin=0.001):
+    """Finds verts whose distance from each
+    other is less than the margin.
+    Returns an Nx2 numpy arry of close pairs."""
+    
+    vc = len(ob.data.vertices)
+    co = np.empty((vc, 3), dtype=np.float32)
+    ob.data.vertices.foreach_get('co', co.ravel())
+
+    boxes = branches(co, margin)
+    dubs = []
+    m = margin ** 2
+    
+    for bz in boxes:
+        if bz.shape[0] > 0:
+            c = co[bz]
+            b_vecs = c[:, None] - c
+            d = np.einsum('ijk,ijk->ij', b_vecs, b_vecs)
+            agw = np.argwhere(d <= m)
+            cull = agw[:, 0] == agw[:, 1]
+            agwc = agw[~cull]
+            if agwc.shape[0] > 0:    
+                
+                dubs += bz[agwc].tolist()
+        
+    return eliminate_duplicate_pairs(np.array(dubs))
+# ------------------------three functions above---------------------------- >>
+
+
 def merge_verts(ob, margin=0.001, obm=None):
 
     if obm is None:
