@@ -1,3 +1,17 @@
+def merge_verts(ob, margin=0.001, obm=None):
+
+    if obm is None:
+        obm = bmesh.new()
+        obm.from_mesh(ob.data)
+    
+    bmesh.ops.remove_doubles(obm, verts=obm.verts, dist=margin)
+    obm.to_mesh(ob.data)
+
+    ob.data.update()
+    obm.clear()
+    obm.free()
+    
+
 def eliminate_duplicate_pairs(ar):
     """Eliminates duplicates and mirror duplicates.
     for example, [1,4], [4,1] or duplicate occurrences of [1,4]
