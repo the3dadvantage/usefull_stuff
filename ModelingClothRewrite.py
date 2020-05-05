@@ -1,6 +1,3 @@
-
-
-
 # when extruding:
 #   currently have to switch to the source shape
 #   This is bceause the coords will be in the same location
@@ -22,6 +19,14 @@
 
 # would it make sense to run cloth physics on a lattice or curve object?????
 
+# undo !!!!!!
+#def b_log(a=None,b=None):
+    #return
+
+print('new------------------')
+print('new------------------')
+print('new------------------')
+print('new------------------')
 
 try:
     import bpy
@@ -41,6 +46,31 @@ try:
 
 except ImportError:
     pass
+
+try:
+    from garments_blender.utils.rich_blender_utils import B_log
+    internal_log = B_log()
+    internal_log.module = 'MC_tools'
+    internal_log.active = True
+    internal_log.name = 'log_MC_tools'
+    b_log = internal_log.b_log
+
+    from garments_blender.utils.rich_blender_utils import fix_all_shape_key_nans
+
+
+except:
+    print("must be calling MC_tools outside of p1")
+    rbu = bpy.data.texts['rich_blender_utils.py'].as_module()
+
+    internal_log = rbu.B_log()
+    internal_log.module = 'MC_tools'
+    internal_log.active = True
+    internal_log.name = 'log_MC_tools'
+    b_log = internal_log.b_log
+
+    fix_all_shape_key_nans = rbu.fix_all_shape_key_nans
+
+
 
 
 # global data
@@ -121,7 +151,7 @@ def create_object_cache(ob):
     print('cache only function')
 
 
-print("new--------------------------------------")
+#print("new--------------------------------------")
 
 
 def cache_interpolation(cloth):
@@ -136,7 +166,7 @@ def cache_interpolation(cloth):
     idx = np.array([int(i.parts[-1]) for i in fp.iterdir()])
 
 
-def cache_only(ob):
+def cache_only(ob, frame=None):
 
     self = ob.MC_props
 
@@ -155,7 +185,12 @@ def cache_only(ob):
     if not final_path.exists():
         final_path.mkdir()
 
-    f = bpy.context.scene.frame_current
+    #f = bpy.context.scene.frame_current
+    f = ob.MC_props.current_cache_frame
+    ob.MC_props['current_cache_frame'] = f + 1
+    if frame is not None:
+        f = frame
+
     txt = final_path.joinpath(str(f))
 
     np.savetxt(txt, get_proxy_co(ob))
@@ -241,7 +276,7 @@ def play_cache(cloth, cb=False):
             try:
                 cloth.obm.verts
             except:
-                print("updated cloth.obm")
+                #print("updated cloth.obm")
                 cloth.obm = bmesh.from_edit_mesh(ob.data)
 
             for i, j in enumerate(cloth.co):
@@ -943,6 +978,52 @@ def bary_bend_springs(cloth):
     cloth.bend_U_d = U_d
 
 
+def eq_bend(ob, cloth):
+    """Uses equallateral tris"""
+
+    ob.update_from_editmode()
+    obm = bmesh.new()
+    obm.from_mesh(ob.data)
+
+
+
+    print()
+    print("------------------ new eq ------------------")
+
+    print(len(ob.data.vertices))
+    
+    
+    # eliminate sew edges and outer edges:
+    ed1 = [e for e in obm.edges if len(e.link_faces) > 1]
+    ed_idx = [e.index for e in obm.edges if len(e.link_faces) > 1]
+    
+    print(ed1[0].verts[0])
+    
+    
+    
+
+    print("------------------ end eq ------------------")
+    
+    # notes =================================
+    # Might want to do cloth structures so it could
+    #   make sense to find edges with more than two faces
+    
+    # Since we're using eq tris instead of actual tris
+    #   couldn't we tile the tris for ngons? Use actual
+    #   edges instead of edges from a triangulated bmesh?
+    
+    # With ngons, we probably want the vert that is least
+    #   paralell/most perp. So like in a cylinder it would
+    #   be the vert that is opposite the edge. Use min dot
+    #   to get the most perp. 
+    
+    
+    
+    # end notes =============================
+
+
+
+
 # precalculated ---------------
 def create_surface_follow_data(active, cloths):
     """Need to run this every time
@@ -1131,7 +1212,7 @@ def create_instance(ob=None):
     if ob is None:
         ob = bpy.context.object
     cloth.ob = ob
-
+    
     if ob.MC_props.cache_only:
         cloth.target = None
         cloth.obm = get_bmesh(ob)
@@ -1201,9 +1282,9 @@ def create_instance(ob=None):
     if ob.data.is_editmode:
         cloth.mode = None
 
-    t = T()
+    #t = T()
     get_springs_2(cloth)
-    T(t, "time it took to get the springs")
+    #T(t, "time it took to get the springs")
 
     # coordinates and arrays ------------
     if ob.data.is_editmode:
@@ -1222,10 +1303,13 @@ def create_instance(ob=None):
     # Dynamic bend data:
     cloth.bend_weights = None         # barycentric weights for placing tri tips
     cloth.bend_surface_offset = None  # distance along non-unit cross product from tris
-    t = T()
+    #t = T()
     # overwrite all the None values
     get_bend_sets(cloth)
-    T(t, "time it took to get the bend springs")
+
+    eq_bend(ob, cloth)
+    
+    #T(t, "time it took to get the bend springs")
 
     # cpoe method for plot
     cloth.axis_div = None
@@ -1431,6 +1515,8 @@ def weight_plot(data, cloth):
 def pure_linear(cloth, data):
     """linear relationships between
     tris and vps"""
+    #print('pure_linear disabled')
+    #return
     co = data['cloth_co']
     sp = data['springs']
     ls = sp[:,0]
@@ -1465,6 +1551,12 @@ def pure_linear(cloth, data):
 
 
 # seam wrangler -------------
+def update_vp_means(data):
+
+    pass
+
+
+# seam wrangler -------------
 def move_tris(cloth, data):
     """Move tris with complete vps to
     location on garment"""
@@ -1491,6 +1583,8 @@ def seam_position(cloth, data):
 
     # setup initial positioning
     co = move_tris(cloth, data)
+    #cloth.co.ravel()[:] = co.ravel()[:]
+    #return
 
     if MC_data['count'] == 0:
         cloth.co.ravel()[:] = co.ravel()[:]
@@ -1513,15 +1607,20 @@ def seam_updater(cloth, data):
     cloth_key = 'sw_view'
     if ob.data.shape_keys is not None:
         keys = ob.data.shape_keys.key_blocks
-        names = [i.name for i in keys if (i.name != 'sw_view' & i.value == 1)]
+        names = [i.name for i in keys if ((i.name != 'sw_view') & (i.value == 1))]
         if len(names) > 0:
             cloth_key = names[-1]
+            data['cloth_key'] = cloth_key
             keys['sw_view'].value = 0
             use_key = True
+        if len(names) > 1:
+            msg = ["!!! Warning. More than one shape key with value of 1" for i in range(3)]
+            msg += names
+            b_log(msg)
 
     get_proxy_co(ob, data['cloth_co'])
 
-    print('=== seam updater ===')
+    #print('=== seam updater ===')
     # manage_seams
 
     #data['velocity'] =         0.77 # movement between run_frams
@@ -1532,20 +1631,27 @@ def seam_updater(cloth, data):
     #data['triangle_influenc'] = 0.9 # triangles forcing seams to targets
     #data['xy_scale'] =    [1.0, 1.0]# multiply the xy values by this amount
 
+    if cloth.current_iter != cloth.last_iter -1:
+        return True
+
     plot = weight_plot(data, cloth) # scales xy
     if data['vis_mesh']:
         link_mesh(plot.tolist(), [], [], 'plot test. Frame: ' + str(bpy.context.scene.frame_current))
 
     # apply slice force:
+    #if False:
+    b_log(['tri_influence when actually called', data['tri_influence']])
     vecs = (plot - data['cloth_co'][data['vps']]) * data['tri_influence']
+    #print('tri influence on seams', data['tri_influence'])
+    #print("MC_tools.py line 1543 testing influence")
+    #vecs = (plot - data['cloth_co'][data['vps']]) * .01# data['tri_influence']
 
-    data['cloth_co'][data['vps']] += vecs
+    data['cloth_co'][data['vps']] += np.nan_to_num(vecs)
 
     ob.data.shape_keys.key_blocks[cloth_key].data.foreach_set('co', data['cloth_co'].ravel())
     ob.data.update()
+    return False
 
-
-                                               ^ #
 # ^               END seam wrangler functions                ^ #
 # ============================================================ #
 
@@ -1656,8 +1762,11 @@ def spring_basic(cloth):
         data = bpy.context.scene.seam_wrangler_data
         type = data['run_type']
         if type == 1:
-            seam_position(cloth, data)
-            pure_linear(cloth, data)
+            if cloth.current_iter == 0:
+                b_log(['running seam position. cloth.current_iter:', cloth.current_iter])
+                seam_position(cloth, data)
+            if cloth.current_iter < 3:
+                pure_linear(cloth, data)
 
         #MC_data['count'] += 1
 
@@ -1754,13 +1863,15 @@ def spring_basic(cloth):
 
     seam_wrangler = bpy.context.scene.MC_seam_wrangler
     if seam_wrangler:
-        data = bpy.context.scene.seam_wrangler_data
+        #data = bpy.context.scene.seam_wrangler_data
         type = data['run_type']
         if type == 2:
-            pure_linear(cloth, data)
-            seam_updater(cloth, data)
 
-        MC_data['count'] += 1
+            su = seam_updater(cloth, data)
+            if cloth.current_iter < 3:
+                if su:
+                    pure_linear(cloth, data)
+            #seam_position(cloth, data) # cant do this without caclulating vps
 
 
 # update the cloth ---------------
@@ -2086,7 +2197,7 @@ def cloth_main(scene=None):
         kill_count = data['run_frames']
         ob = data['tri_mesh_ob']
         ob.MC_props.velocity = data['velocity']
-
+        print(MC_data['count'], 'count where killing seam manager')
         if MC_data['count'] >= kill_count:
             print('ran seam wrangler and killed')
             return
@@ -2162,31 +2273,58 @@ def install_handler(continuous=True, clear=False, clear_anim=False):
 # seam wrangler callback ----------
 def cb_seam_wrangler(self, context):
 
+    # in simulation 2889 headwrap:
+    # Migt be better to run vp means each frame
+    # To do this I need to update the coords of vp means.
+    # They are currently built on setup when iterating through all the slie target data.
+    # There is something causing the seams to be pulled to one side. Coupld be nans are zeroing forces on one sides
+    #   could be an index error. Could be there is a problem with the linear springs in "pure_linear"
+    b_log(['cb_seam_wrangler called', 'checking self.seam_wrangler', self.seam_wrangler])
+
     if not self.seam_wrangler:
         return
 
-    MC_data['count'] = 0
-    data = bpy.context.scene.seam_wrangler_data
+    data = bpy.context.scene.seam_wrangler_data # this value is different the second time it runs
+
+    MC_data['sw_count'] = data['sw_count']
+    MC_data['count'] = data['sw_count']
 
     ob = data['tri_mesh_ob']
     ob.MC_props.velocity = data['velocity']
 
     cloth = get_cloth(ob)
     iters = data['run_frames']
+    iters = 7
+
+    cloth.last_iter = iters
     for i in range(iters):
+        cloth.current_iter = i
         spring_basic(cloth)
 
-    cache(cloth, keying=False)
+    #cache(cloth, keying=False)
     ob.data.shape_keys.key_blocks['MC_current'].data.foreach_set("co", cloth.co.ravel())
     #ob.data.vertices.foreach_set('co', cloth.co.ravel())
     ob.data.update()
 
+    fix_all_shape_key_nans(ob)
+
+    #if True: # this runs twice. Once on setup.
+    if False: # this runs twice. Once on setup.
+        if data['sw_count'] == 0: # Was doing this to get a better starting shape for the head wrap.
+            Bobj = data['ob']
+            co = get_proxy_co(Bobj)
+            co[:,0] *= 0.5
+            Bobj.data.shape_keys.key_blocks['sw_view'].data.foreach_set('co', co.ravel())
+            Bobj.data.update()
+
+        for i in range(iters):
+            cloth.current_iter = i
+            spring_basic(cloth)
 
 # calback functions ---------------
 def oops(self, context):
     # placeholder for reporting errors or other messages
     return
-
 
 
 def open_folder(path):
@@ -2237,14 +2375,6 @@ def cb_cache(self, context):
         #   back with partial influence and running cloth sim
 
     ob = self.id_data
-
-    print()
-    print()
-    print()
-    print('ran cb_cache with ', ob.name)
-    print()
-    print()
-    print()
 
     cloth = get_cloth(ob)
 
@@ -2427,7 +2557,7 @@ def cb_cloth(self, context):
         reset_shapes(ob)
         index = ob.data.shape_keys.key_blocks.find('MC_current')
         ob.active_shape_key_index = index
-
+    
         cloth = create_instance(ob=ob)
 
         # recent_object allows cloth object in ui
@@ -3499,6 +3629,7 @@ def unregister():
     idx_to_kill = idx[booly]
     for i in idx_to_kill[::-1]:
         del(bpy.app.handlers.undo_post[i])
+
 
 
 if __name__ == '__main__':
