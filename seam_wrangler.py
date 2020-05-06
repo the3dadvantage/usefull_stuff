@@ -1,46 +1,43 @@
+# undo !!!!!!
+#def b_log(a=None,b=None):
+    #return
+
+
 try:
     import bpy
     import numpy as np
     import json
+    actual_frames = [0]
+    test_cache = False
+    #test_cache = True
 
 except ImportError:
     pass
 
+try:
+    from garments_blender.utils.rich_blender_utils import fix_all_shape_key_nans
+    from garments_blender.utils.rich_blender_utils import B_log
+    from garments_render.simulation.MC_tools import read_python_script
+    internal_log = B_log()
+    internal_log.module = 'seam wrangler'
+    internal_log.active = True
+    internal_log.name = 'log_seam_wrangler'
+    b_log = internal_log.b_log
 
-def get_vertex_weights(ob, name, obm=None):
-    """Get vertex weights. If no weight is assigned assign
-    and set weight to zero"""
-    # might want to look into using map()
-    count = len(ob.data.vertices)
-    arr = np.zeros(count, dtype=np.float32)
+except:
+    print("if not calling seam manager outside p1 we have a problem")
+    rbu = bpy.data.texts['rich_blender_utils.py'].as_module()
 
-    g_idx = ob.vertex_groups[name].index
+    internal_log = rbu.B_log()
+    internal_log.module = 'MC_tools'
+    internal_log.active = True
+    internal_log.name = 'log_MC_tools'
+    b_log = internal_log.b_log
 
-    # for edit mode:
-    if ob.data.is_editmode:
-        count = len(obm.verts)
-        arr = np.zeros(count, dtype=np.float32)
-        dvert_lay = obm.verts.layers.deform.active
-        if dvert_lay is None: # if there are no assigned weights
-            return arr
-        for idx, v in enumerate(obm.verts):
-            dvert = v[dvert_lay]
-
-            if g_idx in dvert:
-                arr[idx] = dvert[g_idx]
-            else:
-                dvert[g_idx] = 0
-                arr[idx] = 0
-        return arr
-
-    g = ob.vertex_groups[name]
-    #ob.data.update()
-    for idx, v in enumerate(ob.data.vertices):
-        ob.vertex_groups[name].add([g_idx, idx], 0.0, 'REPLACE')
-
-    return arr
-
-
+    fix_all_shape_key_nans = rbu.fix_all_shape_key_nans
+    mct = bpy.data.texts['MC_tools.py'].as_module()
+    read_python_script = mct.read_python_script
+    
 
 def setup_pin_group(ob, vidx):
     # setup vertex pin group. (matches points manipulated by seam manager)
@@ -52,24 +49,13 @@ def setup_pin_group(ob, vidx):
     vc = len(ob.data.vertices)
     ara = np.arange(vc)
 
-    # !!! seems to be a bug in blender that if you set the weights as you go
-    #   it will always set the wieght of zero
-    #   Iterating twice instead.
-
-    # for v in ara.tolist(): # without tolist() vertex group add breaks
-    #     print('vertex error here???')
-    #     ob.vertex_groups['SW_seam_pin'].add([pidx, v], 0.0, 'REPLACE')
-    get_vertex_weights(ob, 'SW_seam_pin', obm=None)
-
     for v in vidx.tolist():
-        ob.vertex_groups['SW_seam_pin'].add([pidx, v], 1.0, 'REPLACE')
+        ob.vertex_groups['SW_seam_pin'].add([pidx, v], 0.0, 'REPLACE')
 
     for mod in ob.modifiers:
         if mod.type == "CLOTH":
             mod.settings.vertex_group_mass = 'SW_seam_pin'
             mod.settings.pin_stiffness = 1.0
-
-    return pidx
 
 
 def get_proxy_co(ob, co=None):
@@ -86,7 +72,7 @@ def get_proxy_co(ob, co=None):
 
 
 def sw_shapes(ob):
-    """Create shape keys if they are missing"""
+    """Create shape key for viewing seam wrangler"""
 
     if ob.data.shape_keys == None:
         ob.shape_key_add(name='Basis')
@@ -98,7 +84,7 @@ def sw_shapes(ob):
 
 
 def reset_shapes(ob):
-    """Create shape keys if they are missing"""
+    """Create shape keys for guide mesh"""
 
     if ob.data.shape_keys == None:
         ob.shape_key_add(name='Basis')
@@ -116,11 +102,10 @@ def reset_shapes(ob):
 
 def get_co_shape(ob, key=None, ar=None):
     """Get vertex coords from a shape key"""
-    v_count = len(ob.data.shape_keys.key_blocks[key].data)
+    vc = len(ob.data.shape_keys.key_blocks[key].data)
     if ar is None:
-        ar = np.empty(v_count * 3, dtype=np.float32)
-    ob.data.shape_keys.key_blocks[key].data.foreach_get('co', ar)
-    ar.shape = (v_count, 3)
+        ar = np.empty((vc, 3), dtype=np.float32)
+    ob.data.shape_keys.key_blocks[key].data.foreach_get('co', ar.ravel())
     return ar
 
 
@@ -239,10 +224,13 @@ def slice_setup(Slice, cloth_key=None): # !!! set testing to False !!!
     if cloth_key is None:
         if ob.data.shape_keys is not None:
             keys = ob.data.shape_keys.key_blocks
-            names = [i.name for i in keys if (i.name != 'sw_view' & i.value == 1)]
+            names = [i.name for i in keys if ((i.name != 'sw_view') & (i.value == 1))]
             if len(names) > 0:
                 Slice.cloth_key = names[-1]
-
+            if len(names) > 1:
+                msg = ["!!! Warning. More than one shape key with value of 1" for i in range(3)]
+                msg += names
+                b_log(msg)
 
     # flat shape coords or mesh coords if there is no flat shape key
     flat_key = False
@@ -257,13 +245,12 @@ def slice_setup(Slice, cloth_key=None): # !!! set testing to False !!!
         vc = len(ob.data.vertices)
         flat_co = np.empty((vc, 3), dtype=np.float32)
         ob.data.vertices.foreach_get('co', flat_co.ravel())
+        b_log(['!!! No flat key when seam wrangler data was created !!!', 'Using mesh coords'])
 
     Slice.flat_co = flat_co
 
     # cloth shape coords
-    #cloth_co = get_co_shape(ob, cloth_key)
     cloth_co = get_proxy_co(ob)
-
     Slice.cloth_co = cloth_co
 
     # ------------
@@ -274,6 +261,7 @@ def slice_setup(Slice, cloth_key=None): # !!! set testing to False !!!
     for s in slices:
         vp_with_nones = np.array(s['vert_ptrs']).T
 
+        tri_tick = vp_with_nones.shape[0] # For offsetting the tri tiler when merging
         xys = []  # xy map
         vps = []  # vertex pointers
         vpsN = [] # with Nones
@@ -307,7 +295,7 @@ def slice_setup(Slice, cloth_key=None): # !!! set testing to False !!!
             # for testing !!! Disable !!!
 
             good = False
-            gvpc = vp.shape[0] # at least on vp in the set
+            gvpc = vp.shape[0] # at least one vp in the set
             if gvpc > 0:
                 tri_tiler  += ([ticker] * gvpc)
                 good_xys += xy.tolist()
@@ -388,7 +376,8 @@ def slice_setup(Slice, cloth_key=None): # !!! set testing to False !!!
             avtm = np.mean(av_tri_mean, axis=0)
 
         avd = np.mean(avds)
-        seam_sets[name] = {'xys': xys,
+        seam_sets[name] = {'tri_tick': tri_tick,
+                           'xys': xys,
                            'vps': vps,
                            'vpsN': vpsN,
                            'dst': dst,
@@ -522,7 +511,7 @@ def missing_distance(Slice, test_val):
 
 
 
-def build_data(Slice, hd, test_val):
+def build_data(Slice, test_val):
     """Generate meshes and such"""
 
     ob = Slice.ob
@@ -614,7 +603,8 @@ def build_data(Slice, hd, test_val):
                 tick_tiler = np.array(s['tri_tiler'], dtype=np.int32) + Slice.seam_sets['tri_tiler_tick']
                 Slice.seam_sets['tri_tiler'] += tick_tiler.tolist()
 
-                Slice.seam_sets['tri_tiler_tick'] = tick_tiler[-1] + 1
+                Slice.seam_sets['tri_tiler_tick'] += s['tri_tick']
+                # worst but ever! Four days to find !!! Slice.seam_sets['tri_tiler_tick'] = tick_tiler[-1] + 1
 
                 # join vps
                 Slice.seam_sets['vps'] += s['vps']
@@ -714,8 +704,13 @@ def build_data(Slice, hd, test_val):
         if 'mega_tri_mesh' not in bpy.data.objects:
             M = Slice.seam_sets['mega_tri_mesh']
             v = np.array(M['verts'])
+            any_nan = np.any(np.isnan(v))
+            any_inf = np.any(np.isinf(v))
+            b_log(['nans or infs when tri mesh is created', any_nan, any_inf])
+
             tri_mesh = link_mesh(v.tolist(), M['edges'], M['faces'], 'mega_tri_mesh')
             reset_shapes(tri_mesh)
+
             tri_mesh.hide_render = True
         tri_mesh = bpy.data.objects['mega_tri_mesh']
         Slice.seam_sets['tri_mesh_ob'] = bpy.data.objects['mega_tri_mesh']
@@ -725,7 +720,6 @@ def build_data(Slice, hd, test_val):
         tri_co.shape = (t_shape[0]//3, 3, 3)
         Slice.seam_sets['tri_co_start'] = tri_co
         Slice.seam_sets['vps'] = np.array(np.hstack(Slice.seam_sets['vps']), dtype=np.int32)
-        hd['vps'] = Slice.seam_sets['vps']
 
     return Slice.seam_sets, test_val
 
@@ -813,8 +807,9 @@ def move_tris(s):
 class Slices():
     pass
 
-def generate_data(ob, hd, test_val, cloth_key=None):
+def generate_data(ob, test_val, cloth_key=None):
 
+    #global data
     Slice = Slices()
     Slice.ob = ob
     ob_name = ob.name
@@ -822,40 +817,29 @@ def generate_data(ob, hd, test_val, cloth_key=None):
     # setup functions
     slice_setup(Slice, cloth_key)
     missing_distance(Slice, test_val)
-    data, test1 = build_data(Slice, hd, test_val)
+    data_set, test1 = build_data(Slice, test_val)
     test1 = test_val is not None
 
     if test1:
-        data = data[test_val]
+        data_set = data_set[test_val]
 
-    bpy.types.Scene.seam_wrangler_data = data
-    #try:
-        #MC = bpy.data.texts['MC_tools.py'].as_module()
-        #MC.register()
-    #except:
-        #print('could not import MC_tools from blend file')
-        #pass
-    #try:
-    #print('importing MC tools from p1')
-    #from garments_render.simulation.MC_tools import register
-    from garments_render.simulation.MC_tools import read_python_script
-    #register()
-    read_python_script('play_cache_files.py')
+    # undo !!!!!!!!
 
-    #except:
-        #print('could not import MC_tools')
 
     bpy.types.Scene.MC_seam_wrangler = True # so the continuous handler can auto_kill
 
-    tris = data['tri_mesh_ob']
+    tris = data_set['tri_mesh_ob']
     bpy.context.view_layer.objects.active = tris
     tris.MC_props.cloth = True
     tris.MC_props.seam_wrangler = False
 
-    tris.MC_props.cache = True
-    tris.MC_props.cache_desktop = True
+    #tris.MC_props.cache = True
+    #tris.MC_props.cache_desktop = True
 
+    if not test_cache:
+        return data_set
     # put the file path in the text at the top
+    read_python_script('play_cache_files.py')
     py_text = bpy.data.texts['play_cache_files.py']
     py_text.cursor_set(0)
     py_text.write('# ' + "cache file save at:")
@@ -867,32 +851,36 @@ def generate_data(ob, hd, test_val, cloth_key=None):
     lc = len(py_text.lines)
     py_text.cursor_set(lc)
     py_text.write('MC = bpy.data.objects["mega_tri_mesh"].MC_props' + '\n')
+    py_text.write('MC.cache_desktop = ' + "True" + '\n')
     py_text.write('MC.cache_only =  True' + '\n')
     py_text.write('MC.play_cache =  True' + '\n')
-    py_text.write('MC.cache_name = ' + "'" + tris.MC_props.cache_name + "'" + '\n')
-    py_text.write('MC.cache_folder = '  +  "'" + tris.MC_props.cache_folder + "'" + '\n')
+    #py_text.write('MC["cache_folder"] = ' + 'str(os.path.expanduser("~/Desktop"))' + '\n')
+
+    #py_text.write('MC.cache_name = ' + "'" + tris.MC_props.cache_name + "'" + '\n')
+    #py_text.write('MC.cache_folder = '  +  "'" + tris.MC_props.cache_folder + "'" + '\n')
 
     py_text.write('MC = bpy.data.objects[' + "'" + ob_name + "'" + '].MC_props' + '\n')
+    py_text.write('MC.cache_desktop = ' + "True" + '\n')
     py_text.write('MC.cache_only =  True' + '\n')
     py_text.write('MC.play_cache =  True' + '\n')
     py_text.write('MC.cache_name = ' + "'" + ob.MC_props.cache_name + "'" + '\n')
-    py_text.write('MC.cache_desktop = ' + "True" + '\n')
+    #py_text.write('MC["cache_folder"] = ' + 'str(os.path.expanduser("~/Desktop"))' + '\n')
+    #py_text.write('MC.cache_desktop = ' + "True" + '\n')
 
     #tris.MC_props.cache_only = True
 
-    return data
+    return data_set
 
 
-def position_triangles(ob, hd, test_val, debug=None, cloth_key=None):
+def position_triangles(ob, test_val, debug=None, cloth_key=None):
     """Generates all the needed data using a number
     of functions and positions triangles along seams"""
 
-    if 'seam_wrangler_data' not in dir(bpy.context.scene):
-        generate_data(ob, hd, test_val, cloth_key)
+    if 'mega_tri_mesh' not in bpy.data.objects:
+        data = generate_data(ob, test_val, cloth_key)
         if debug == 2:
             return
 
-        data = bpy.context.scene.seam_wrangler_data
         tris = data['tri_mesh_ob']
         data['run_type'] = 1 # will run seam forces for positioning
 
@@ -907,59 +895,52 @@ def position_triangles(ob, hd, test_val, debug=None, cloth_key=None):
         data['decay'] = 1
         data['vel_floor'] = 0.77
         data['run_frames'] = 7
+        data['sw_count'] = 0
+        data['count'] = 0
         if debug == 1:
             tris.MC_props.continuous = True
             return
+        # For the pin vertex group
+        setup_pin_group(ob, data['vps'])
+
+        # have to run once to postion before we move the mesh object.
+        bpy.types.Scene.seam_wrangler_data = data
         tris.MC_props.seam_wrangler = True # debug 3 runs in callback without manage seams
 
-        # For the pin vertex group
-    data = bpy.context.scene.seam_wrangler_data
-    hd['pidx'] = setup_pin_group(ob, data['vps'])
-    hd['data'] = data
-    pidx = ob.vertex_groups['SW_seam_pin'].index
-    for v in data['vps'].tolist():
-        ob.vertex_groups['SW_seam_pin'].add([pidx, v], 1.0, 'REPLACE')
+        return data
 
 
-def manage_seams(ob, cloth_key=None, hd=None, settings={}, test_val=None, debug=None):
+def manage_seams(ob, cloth_key=None, settings={}, test_val=None, debug=None):
     """Run in frame handers with a variety of settings"""
     # generate data on first call
-    position_triangles(ob, hd, test_val, debug, cloth_key)
+    #position_triangles(ob, test_val, debug, cloth_key)
 
-    if debug == 1:
-        return
-    if debug == 2:
-        return
-    if debug == 3:
+    if debug in [1, 2, 3]:
         return
 
     data = bpy.context.scene.seam_wrangler_data
     # default settings
     data['linear_iters'] =        1 # iterations of seams pulling on tris
-    data['velocity'] =         0.77 # movement between run_frams
+    data['velocity'] =         0.77 # movement between run_frames
     data['run_frames'] =          1 # calculate every force this many times
     data['seam_influence'] =    1.0 # seams pulling on triangles
     data['iterations'] =         12 # solves the trianlges this many times every run frame (higher means stiffer but slower to solve)
     data['tri_force'] =           1 # forces the trinalgs towards their original shape (1 or less to avoid exploding)
-    data['tri_influence'] =     0.9 # triangles forcing seams to targets
+    data['tri_influence'] =     0.321 # triangles forcing seams to targets
     data['xy_scale'] =    [1.0, 1.0]# multiply the xy values by this amount
     data['vis_mesh'] = False # create points where the seams are being moved to
 
     for key, value in settings.items():
         if key in data:
             data[key] = value
-        else:
-            print('!!! manage_seams setting did not match:', key, '!!!')
+        #else:
+            #print('!!! manage_seams setting did not match:', key, value, '!!!')
 
     data['run_type'] = 2 # will run seam forces for update
     tris = data['tri_mesh_ob']
 
     tris.MC_props.stretch_iters = data['iterations']
-
-    if debug == 3:
-        tris.MC_props.continuous
-        return
-    tris.MC_props.seam_wrangler = True
+    tris.MC_props.seam_wrangler = True # setting the property how we trigger it to run
 
 
 # !!! call this one to drop in the frame handler !!!
@@ -968,125 +949,155 @@ def seam_manager(Bobj=None, frames=None, kill_frame=None, settings=None, cloth_k
     force seams into submission at frames
     in the list."""
 
-    from garments_render.simulation.MC_tools import register
-    from garments_render.simulation.MC_tools import cache_only
+    global actual_frames
+    actual_frames = np.hstack(frames)
+
+    logs1 = ["!!! called seam manager !!!" for i in range(3)]
+    logs1 += ['settings from arg line 974:', settings]
+    logs1 += ['frames coming in from arg:', frames]
+
     try:
-        print("tried to register modeling cloth")
+        from garments_render.simulation.MC_tools import register
+        from garments_render.simulation.MC_tools import cache_only
         register()
+        logs1 += ['Succesfully registered MC_tools']
     except:
-        print(Bobj.MC_props.cloth, "MC_tools is registered")
+        b_log(['Got an error when trying to register modeling cloth', 'Probably already registered'])
 
-    print("added a seam manager")
+    # for running in blender --------------
+    try:
+        MC_tools = bpy.data.texts['MC_tools.py'].as_module()
+        MC_tools.register()
+    except:
+        pass
+    # -------------------------------------
 
-    if 'seam_wrangler_data' in dir(bpy.context.scene):
-        print('Already a seam manager in file')
+    data['sw_count'] = 0
+    data['count'] = 0
+    data['ob'] = Bobj
+    data['frames'] = actual_frames
+    data['init_frame'] = min(actual_frames)
+    data['kill_frame'] = max(actual_frames)
 
-        return
-
-    bpy.types.Scene.seam_handler_data = {}
-    hd = bpy.context.scene.seam_handler_data
-    hd['count'] = 0
-    hd['ob'] = Bobj
-
-    if frames is None:
-        frames = [1,2,3]
-    hd['frames'] = frames
-
-    if kill_frame is None:
-        if not frames:
-            frames = [0]
-        kill_frame = frames[-1]
-    hd['kill_frame'] = kill_frame
-
-    hd['test'] = "test"
+    logs1 += ['init frame:', data['init_frame']]
+    logs1 += ['kill frame from arg:', kill_frame, 'overwriting kill frame with:', data['kill_frame']]
 
     if settings is None:
+        b_log(['!!! Settings coming in from arg is None !!!' for i in range(3)])
         settings = [{},
                     {},
                     {},
                     {}]
 
-    # testing !!!
-    hd['frames'] = np.arange(250).tolist()
-    hd['kill_frame'] = 250
-    # testing !!!
+    data['settings'] = settings
 
-    hd['settings'] = settings
+    bpy.types.Scene.seam_wrangler_data = {'init': False}
+    for k, v in data.items():
+        bpy.context.scene.seam_wrangler_data[k] = v
 
-    sw_shapes(Bobj) # add 'sw_view' to shape keys and set value to 1
-
+    b_log(logs1)
+    
     # the function that runs every frame
     def seam_wrangler_anim(scene):
-        active_object = bpy.context.object
+        data = bpy.context.scene.seam_wrangler_data
         f = bpy.context.scene.frame_current
-        hd = bpy.context.scene.seam_handler_data
-        ob = hd['ob']
+        active_object = bpy.context.object
+        
+        if f == data['init_frame']:
+            tri_data = position_triangles(Bobj, test_val=None, debug=None, cloth_key=None)
+            for k, v in tri_data.items():
+                data[k] = v
+            data['init'] = True    
+        
+        if not data['init']:
+            b_log(['init frame not hit yet'])
+            return
+        
+        if f not in actual_frames:
+            b_log(['seam_wrangler_anim running not in frames at frame:', f, 'skipping'])
+            return
+        
+        ob = data['ob']
 
-        # !!! caching the bake of the garment !!!
-        cache_only(Bobj)
-        # !!! caching the bake of the garment !!!
+        fix_all_shape_key_nans(ob)
+        if 'mega_tri_mesh' in bpy.data.objects:
+            fix_all_shape_key_nans(bpy.data.objects['mega_tri_mesh'])
 
-        print()
-        print('+++++++ current frame ', f)
-        print()
+        sc = len(data['settings'])
+        if sc == 0:
+            settings = {}
+        else:
+            settings = data['settings'][-1]
+            if data['count'] < sc:
+                settings = data['settings'][data['count']]
 
-        keys = ob.data.shape_keys
-        if keys is None:
-            print('No active shape key for seam manager')
-            #return
-
-        keys = keys.key_blocks
-        active_keys = [i.name for i in keys if (i.name != 'sw_view' & i.value == 1)]
+        keys = ob.data.shape_keys.key_blocks
+        
+        active_keys = [i.name for i in keys if ((i.name != 'sw_view') & (i.value == 1))]
         if len(active_keys) == 0:
-            print('No active shape key for seam manager. Using sw_view key')
-            print('key list: ', active_keys)
-            #return
+            b_log(['!!! No active shape key for seam manager !!!' for i in range(3)])
 
-        if f in hd['frames']:
-            if bpy.context.scene.frame_current % 1 == 0:
-                if 'pidx' in hd:
-                    for v in hd['data']['vps'].tolist():
-                        ob.vertex_groups['SW_seam_pin'].add([hd['pidx'], v], 0.3, 'REPLACE')
+        val = 0.0
 
-            sc = len(hd['settings'])
-            if sc == 0:
-                settings = {}
-            else:
-                settings = hd['settings'][-1]
-                if hd['count'] < sc:
-                    settings = hd['settings'][hd['count']]
+        if f in actual_frames:
 
-            manage_seams(ob, cloth_key, hd, settings=settings, test_val=None, debug=None)
-            hd['count'] += 1
+            for mod in ob.modifiers: # cloth modifiers can come and go
+                if mod.type == "CLOTH":
+                    mod.settings.vertex_group_mass = 'SW_seam_pin'
+                    mod.settings.pin_stiffness = 1.0
 
-            if False:
-                pidx = ob.vertex_groups['SW_seam_pin'].index
-                if (bpy.context.scene.frame_current + 1) % 2 == 0:
-                    for v in hd['data']['vps'].tolist():
-                        ob.vertex_groups['SW_seam_pin'].add([pidx, v], 0.0, 'REPLACE')
+            print('seam_manager adjusted garment at frame: ',f)
+            val = 0.3
 
-        if f == hd['kill_frame']:
+        pidx = ob.vertex_groups['SW_seam_pin'].index
+        for v in data['vps'].tolist():
+            ob.vertex_groups['SW_seam_pin'].add([pidx, v], val, 'REPLACE')
+
+        # a bug in blender always sets vert 0 to a weight of 1
+        if 0 not in data['vps']:
+            ob.vertex_groups['SW_seam_pin'].add([pidx, 0], 0.0, 'REPLACE')
+
+        manage_seams(ob, cloth_key, settings=settings, test_val=None, debug=None)
+        bpy.context.view_layer.objects.active = active_object
+
+        if True:
+            fix_all_shape_key_nans(ob)
+            fix_all_shape_key_nans(bpy.data.objects['mega_tri_mesh'])
+
+        if test_cache:
+            cache_only(bpy.data.objects['mega_tri_mesh'], Bobj.MC_props.current_cache_frame)
+            cache_only(Bobj)
+
+        data['count'] += 1
+        data['sw_count'] += 1
+
+        if f == data['kill_frame']:
             # clean dead versions of the animated handler
-            bpy.context.view_layer.objects.active = active_object
+            b_log(['Hit the kill frame', f, "deleting bpy.context.scene.seam_wrangler_data"])
             handler_names = np.array([i.__name__ for i in bpy.app.handlers.frame_change_post])
             booly = [i == 'seam_wrangler_anim' for i in handler_names]
             idx = np.arange(handler_names.shape[0])
             idx_to_kill = idx[booly]
             for i in idx_to_kill[::-1]:
                 del(bpy.app.handlers.frame_change_post[i])
-                print("deleted handler ", i)
+                b_log(["deleted handler ", i])
 
             # clean up pin group
             pidx = ob.vertex_groups['SW_seam_pin'].index
-            for v in vidx.tolist(): # without tolist() vertex group add breaks
+            for v in data['vps'].tolist(): # without tolist() vertex group add breaks
                 ob.vertex_groups['SW_seam_pin'].add([pidx, v], 0.0, 'REPLACE')
+
+            for mod in ob.modifiers:
+                if mod.type == "CLOTH":
+                    mod.settings.vertex_group_mass = ''
+
+            bpy.data.objects['mega_tri_mesh'].name = 'used_tris'
+            del(bpy.types.Scene.seam_wrangler_data)
 
     handler_names = np.array([i.__name__ for i in bpy.app.handlers.frame_change_post])
     booly = [i == 'seam_wrangler_anim' for i in handler_names]
-    if np.any(booly):
-        return
-
-    bpy.app.handlers.frame_change_post.append(seam_wrangler_anim)
+    if not np.any(booly):
+        bpy.app.handlers.frame_change_post.append(seam_wrangler_anim)
 
 
 def test():
@@ -1121,3 +1132,22 @@ def test():
 
     # restore the active state
     bpy.context.view_layer.objects.active = active_objec
+
+
+# undo !!!!!!!!!!
+#try:
+#    del(bpy.types.Scene.seam_wrangler_data)
+#except:
+#    pass
+#Bobj = bpy.data.objects['g7442']
+#seam_manager(Bobj=Bobj, frames=[167,2,3], kill_frame=170, settings=None, cloth_key=None)
+
+#position_triangles(Bobj, test_val=None, debug=None, cloth_key=None)
+    
+if False:    
+    try:    
+        del(bpy.types.Scene.seam_wrangler_data)
+    except:
+        pass
+    Bobj = bpy.data.objects['g7442']
+    seam_manager(Bobj=Bobj, frames=[167,168,169], kill_frame=170, settings=None, cloth_key=None)
