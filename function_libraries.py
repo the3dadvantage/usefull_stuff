@@ -521,6 +521,10 @@ def dots(a,b):
     w = np.einsum('ijk,ijk->ij', a, b)
     #N x 2 x 3 - N x 2 x 3
     a = np.einsum('ijk,ijk->ij', a, b)    
+    
+    #N x 2 x 3 - N x 3
+    np.einsum('ij, ikj->ik', axis_vecs, po_vecs)
+    
     #mismatched N x 3 - N2 x 3 with broadcasting so that the end result is tiled
     mismatched = np.einsum('ij,i...j->...i', a, np.expand_dims(b, axis=0))    
     # 4,3,3 - 4,2,3 with broadcasting    
