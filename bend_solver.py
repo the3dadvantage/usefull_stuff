@@ -82,16 +82,6 @@ def get_poly_centers(ob, co, data=None):
     return [centers, div, indexer, pidex]
 
 
-def measure_linear_bend(cloth):
-    """Takes a set of coords and an edge idx and measures segments"""
-    co = cloth.co
-
-    l = cloth.sp_ls
-    v = cloth.full_moved - co[l]
-    d = np.einsum("ij ,ij->i", v, v)
-    return v, d, np.sqrt(d)
-
-
 # universal ---------------------
 def pairs_idx(ar):
     """Eliminates duplicates and mirror duplicates.
@@ -108,6 +98,8 @@ def pairs_idx(ar):
 #                                                         #
 # --------------------end universal---------------------- #
 
+
+# precalculated ------------------------
 def get_j_surface_offset(cloth):
     """Get the vecs to move the plotted
     wieghts off the surface."""
@@ -121,7 +113,16 @@ def get_j_surface_offset(cloth):
     
     cloth.plot_vecs = cloth.sco[cloth.swap_jpv] - cloth.j_plot
     cloth.plot_dots = np.einsum('ij,ij->i', cloth.plot_normals, cloth.plot_vecs)[:, None]
-    
+
+
+# dynamic ------------------------------
+def measure_linear_bend(cloth):
+    """Takes a set of coords and an edge idx and measures segments"""
+    l = cloth.sp_ls # left side of the springs (Full moved takes the place of the right side)
+    v = cloth.full_moved - cloth.co[l]
+    d = np.einsum("ij ,ij->i", v, v)
+    return v, d, np.sqrt(d)    
+
 
 # dynamic ------------------------------
 def get_eq_tri_tips(cloth, co, centers, skip=False):
@@ -135,7 +136,6 @@ def get_eq_tri_tips(cloth, co, centers, skip=False):
         cloth.j_tips = centers[cloth.stacked_faces]
         cloth.j_ce_vecs = centers[cloth.stacked_faces] - co[cloth.stacked_edv[:,0]]
         return cloth.j_tips, cloth.j_axis_vecs, cloth.j_ce_vecs
-    
     
     # creates tris from center and middle of edge. 
     # Not sure if it makes any difference... 
@@ -216,19 +216,15 @@ def eq_bend_data(cloth):
 def get_poly_vert_tilers(cloth):
     """Get an index to tile the left and right sides.
     ls and rs is based on the left and right sides of
-    the face paris."""
+    the face pairs."""
     
     cloth.swap_jpv = []
-    cloth.jpv = []
     cloth.jpv_full =[]
     ob = cloth.ob
     
-    #cloth.stack_full =[]
     cloth.ab_faces = []
     cloth.ab_edges = []
     
-    
-        
     count = 0
     for i, j in zip(cloth.swap_faces, cloth.stacked_edv): # don't need to swap edv because both sides share the same edge
         
@@ -243,8 +239,6 @@ def get_poly_vert_tilers(cloth):
         cloth.ab_edges += nums[~(b2)].tolist()
         
         count += nar.shape[0]
-        
-        cloth.jpv += [v for v in ob.data.polygons[i].vertices]
         r = [v for v in ob.data.polygons[i].vertices if v not in j]
         cloth.swap_jpv += r
 
@@ -252,12 +246,6 @@ def get_poly_vert_tilers(cloth):
         r = [v for v in ob.data.polygons[i].vertices]
         cloth.jpv_full += r
 
-    #for i in cloth.stacked_faces:
-    #    r = [v for v in ob.data.polygons[i].vertices]
-    #    cloth.stack_full += r
-
-
-    
 
 def tiled_weights(cloth):
     """Tile the tris with the polys for getting
@@ -269,70 +257,17 @@ def tiled_weights(cloth):
     # counts per poly less the two in the edges
     cloth.full_counts = np.array([len(p.vertices) for p in ob.data.polygons], dtype=np.int32)
     cloth.full_div = np.array(cloth.full_counts, dtype=np.float32)[cloth.swap_faces][:, None]
-    #cloth.full_div2 = np.array(cloth.full_counts, dtype=np.float32)[cloth.stacked_faces][:, None]
     cloth.plot_counts = cloth.full_counts - 2 # used by plotted centers
-
 
     # joined:
     jfps = cloth.stacked_faces.shape[0]
 
-    
     jsc = cloth.plot_counts[cloth.swap_faces]    
     cloth.j_tiler = np.hstack([[i] * jsc[i] for i in range(jfps)])
     cloth.js_tris = cloth.j_tris[cloth.j_tiler]
     
     jscf = cloth.full_counts[cloth.swap_faces]
     cloth.ab_tiler = np.hstack([[i] * jscf[i] for i in range(jfps)])
-    
-    # ab tiler duplicates the face center to match
-    #   ab_coords. One copy for each vert in the poly
-    #   so a face like: co[0, 3, 5, 7] has one center
-    #   which is copied like: [0, 0, 0, 0]
-    #   with multiple faces it's in flattened sets:
-    #                   [0, 3, 5, 7, 0, 10, 5]
-    #                   [0, 0, 0, 0, 1, 1, 1,]
-    
-    
-    """
-    I need to sort out how the plotted sets relate
-    To the springs. I can have the left side of the springs
-    be like [0,0,0,1,1,1,1,1,2,2,2,3,3,3,3,3,3] etc
-    Just have to make sure it corresponds to the ab_coords.
-    
-    For this I need to track the ab_coords back to the source
-    Because some faces are swapped, some are stacked, some
-    are raveled afver transpose, Im having a hard time keeping
-    it straight in my head...
-    
-    we start by making a trianlge on the l face
-    We have the poly verts from the r face opposite
-    the axis from the l tri. This means that plot
-    for the first face corresponds to poly verts
-    on the right, not the left.
-    I could write the ab 
-    
-    
-    
-    perhaps the easiest way to sort this out is
-    springs: [[3,0]
-              [7,1]
-              [4,2]
-              [0,3]
-              [2,4]
-              [6,5]
-              [2,6]
-              [8,7]
-              [8,8]]
-    where the right side is the ab_coords
-    in order. The left side is the poly verts of
-    the swapped faces.
-    
-    so...
-    """
-
-
-    # left side of springs    
-    #sp_ls = []
     cloth.sp_ls = np.hstack([[v for v in cloth.ob.data.polygons[f].vertices] for f in cloth.swap_faces])
     cloth.sp_rs = np.arange(cloth.sp_ls.shape[0])    
     
@@ -361,10 +296,6 @@ def triangle_data(cloth):
 
 def linear_bend_set(cloth):
     
-    
- 
-    
-    
     cloth.bend_stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32)
     ab = np.array(cloth.jpv_full)
     
@@ -385,13 +316,10 @@ def ab_setup(cloth):
     
 
 def dynamic(cloth):
+
     # get centers from MC_current
-    print("dynamic here --------------------------")
-    
     centers = get_poly_centers(cloth.ob, cloth.co, cloth.center_data)
     co = cloth.co
-    
-
     
     #cloth.j_tris[:] = 0
     cloth.j_tris[:, :2] = co[cloth.stacked_edv]
@@ -399,19 +327,17 @@ def dynamic(cloth):
     cloth.j_tris[:, 2] = tips
     
     jw = cloth.jw
-
-    
     j_plot = np.sum(cloth.j_tris[cloth.j_tiler] * jw[:,:,None], axis=1)
 
-    bpy.data.objects['b2'].location = j_plot[1]
-
-    cross = np.cross(ax, ce)
-
-    normals = cross / np.sqrt(np.einsum('ij,ij->i', cross, cross))[:, None]
-    plot_normals = normals[cloth.j_tiler]
-    
-    final_plot = j_plot + (plot_normals * cloth.plot_dots)
-
+    # for just flattening
+    final_plot = j_plot
+    flat = False
+    if not flat:
+        cross = np.cross(ax, ce)
+        normals = cross / np.sqrt(np.einsum('ij,ij->i', cross, cross))[:, None]
+        plot_normals = normals[cloth.j_tiler]
+        final_plot = j_plot + (plot_normals * cloth.plot_dots)
+        
     # get centers from plot
     cloth.ab_centers[:] = 0
     cloth.ab_centers += co[cloth.stacked_edv[:, 0]]
@@ -422,33 +348,13 @@ def dynamic(cloth):
 
     c_vecs = centers[cloth.swap_faces] - cloth.ab_centers
 
-
-
     cloth.ab_coords[cloth.ab_faces] = final_plot
     cloth.ab_coords[cloth.ab_edges] = cloth.co[cloth.stacked_edv.ravel()]
-
     
     full_moved = cloth.ab_coords + c_vecs[cloth.ab_tiler]
     
     cloth.full_moved = full_moved
         
-
-    print(cloth.full_moved.shape, "full move shape")
-    
-    
-    print(cloth.swap_jpv)
-    print(cloth.ab_faces, "ab faces")    
-    
-    
-    
-    
-    a = 4
-    
-    #bpy.data.objects['e'].location = cloth.co[1]
-    bpy.data.objects['ee'].location = cloth.full_moved[4]
-    
-
-
 
 def bend_setup(cloth):
     cloth.center_data = get_poly_centers(cloth.ob, cloth.sco, data=None)
@@ -461,14 +367,9 @@ def bend_setup(cloth):
     linear_bend_set(cloth)
     
 
-
-
-
-
 def linear_bash(cloth):
-
     
-    stretch = cloth.ob.MC_props.bend * 0.1
+    stretch = cloth.ob.MC_props.bend * .2
         
     basic_set = cloth.linear_bend_springs
     basic_v_fancy = cloth.sp_ls
@@ -481,9 +382,9 @@ def linear_bash(cloth):
     # mean method -------------------
     cloth.bend_stretch_array[:] = 0.0
 
-    rock_hard_abs = np.abs(move_l)
-    np.add.at(cloth.bend_stretch_array, basic_v_fancy, rock_hard_abs)
-    weights = rock_hard_abs / cloth.bend_stretch_array[basic_v_fancy]
+    #rock_hard_abs = np.abs(move_l)
+    np.add.at(cloth.bend_stretch_array, basic_v_fancy, move_l)
+    weights = move_l / cloth.bend_stretch_array[basic_v_fancy]
     # mean method -------------------
 
     # apply forces ------------------
