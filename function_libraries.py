@@ -1,4 +1,17 @@
 
+def select_edit_mode(ob, verts, obm=None):
+    """Selects verts in edit mode and updates"""
+    if ob.data.is_editmode:
+        if obm is None:
+            obm = bmesh.from_edit_mesh(ob.data)
+            obm.verts.ensure_lookup_table()
+        for v in np.hstack(verts):
+            if v is not None:
+                obm.verts[v].select = True
+        if obm is None:
+            bmesh.update_edit_mesh(ob.data)        
+
+
 # ---------------------four functions below------------------------------- <<
 def eliminate_duplicate_pairs(ar):
     """Eliminates duplicates and mirror duplicates.
