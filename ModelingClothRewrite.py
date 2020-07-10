@@ -1617,7 +1617,7 @@ def abstract_bend_(cloth):
         cv *= mult
     #print(cloth.bend_multiplier)
     #np.add.at(cloth.co, cloth.sp_ls, np.nan_to_num(cv * stretch))
-    print(np.sum(cv, axis=0))
+    #print(np.sum(cv, axis=0))
     np.add.at(cloth.co, cloth.sp_ls, np.nan_to_num(cv))# * stretch))
     return
 
@@ -2306,8 +2306,8 @@ def create_instance(ob=None):
     apply_in_place(cloth.ob, cloth.wco)
 
     # abstract bend setup:
-    if cloth.ob.name == 'mega_tri_mesh':
-    #if False:
+    #if cloth.ob.name == 'mega_tri_mesh':
+    if False:
     #if True:
 
         # Bend spring data ()------------------
@@ -2812,7 +2812,8 @@ def spring_basic(cloth):
     cloth.vel_zero[:] = cloth.co
     cloth.feedback[:] = cloth.co
 
-    if not seam_wrangler:
+    #if not seam_wrangler:
+    if True:
         if cloth.do_bend:
             if cloth.ob.MC_props.bend > 0:
                 for i in range(cloth.ob.MC_props.bend_iters):
@@ -2865,9 +2866,10 @@ def spring_basic(cloth):
 
             # test ====================== bend springs
             # test ====================== bend springs
-            if seam_wrangler:
-                for i in range(cloth.ob.MC_props.bend_iters):
-                    bend_spring_force_mixed(cloth)
+            if False:
+                if seam_wrangler:
+                    for i in range(cloth.ob.MC_props.bend_iters):
+                        bend_spring_force_mixed(cloth)
             # test ====================== bend springs
             # test ====================== bend springs
 
@@ -3327,8 +3329,9 @@ def cb_seam_wrangler(self, context):
     straightness = data['straightness']
     ob.MC_props.bend = data['straightness']
 
-    iters = data['run_frames']
-    iters = 7
+    iters = data['total_iterations']
+    #print(data['total_iterations'], "data total iterations")
+    #iters = 7
 
     cloth.last_iter = iters
     for i in range(iters):
