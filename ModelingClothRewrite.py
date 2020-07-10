@@ -22,7 +22,7 @@
 # undo !!!!!!
 #def b_log(a=None,b=None):
     #return
-    
+
 # !!! OPTIMISE: lots of placed to provide and "out" array. Start with all the einsums.
 # !!! might also check the speed of linalg against v / sqrt(einsum(vec vec))
 
@@ -304,33 +304,33 @@ def get_tri_bounds(co, tridex):
     """Convert to tri mesh.
     Get the bounding corners
     of each face."""
-    
+
     tri_coords = co[tridex]
     # optimize # can provide out arrays for min and max
     mins = np.min(tri_coords, axis=1)
     maxs = np.max(tri_coords, axis=1)
-    
+
     return mins, maxs
 
 
 def to_boxes(min, max, mid, bool):
     # [ilfu, ilfd, ilbu, ilbd, irfu, irfd, irbu, irbd]
     #so a box consists of a min and max bound as two 3d vecs
-    
+
     # need to add the margin to these before checking
     #   if the tris are in there.
-    
+
     #         [max]
     #     [mid]
     # [min]
-    
-    
+
+
     #so I could run it again with the mins
     #and maxs of the tris.
     #I would get a bunch of idxs of tris
-    
-    
-    
+
+
+
 
     r = +x
     l = -x
@@ -338,11 +338,11 @@ def to_boxes(min, max, mid, bool):
     b = -y
     u = +z
     d = -z
-    
+
     [ilfu, ilfd, ilbu, ilbd, irfu, irfd, irbu, irbd]
-    
-    
-            
+
+
+
 
 # universal ---------------------
 def octree(co, margin=0.001, idx=None, bounds=None):
@@ -351,7 +351,7 @@ def octree(co, margin=0.001, idx=None, bounds=None):
     # could test dividing up the world instead of dividing boxes
     # to run extra depth run this again on subsets.
     # if the count in a single box is too high that might make sense.
-    
+
     # instead of fancy indexing with subsets I could try a bool array of the entire index...
     if bounds is None:
         b_min = np.min(co, axis=0)
@@ -359,7 +359,7 @@ def octree(co, margin=0.001, idx=None, bounds=None):
         mid = b_min + ((b_max - b_min) / 2)
         mid_ = mid + margin
         _mid = mid - margin
-        
+
         x_, y_, z_ = mid_[0], mid_[1], mid_[2]
         _x, _y, _z = _mid[0], _mid[1], _mid[2]
         #x, y, z = mid[0], mid[1], mid[2]
@@ -368,16 +368,16 @@ def octree(co, margin=0.001, idx=None, bounds=None):
         b_min = bounds[0]
         b_max = bounds[1]
         mid = bounds[2]
-    
+
         mid_ = mid # + margin
         _mid = mid # - margin
-        
+
         x_, y_, z_ = mid_[0], mid_[1], mid_[2]
         _x, _y, _z = _mid[0], _mid[1], _mid[2]
         #x, y, z = mid[0], mid[1], mid[2]
-    
+
     # l = left, r = right, f = front, b = back, u = up, d = down
-    if idx is None:    
+    if idx is None:
         idx = np.arange(co.shape[0], dtype=np.int32)
 
     bounds = []
@@ -432,16 +432,16 @@ def octree(co, margin=0.001, idx=None, bounds=None):
     boxes = [ilfu, ilfd, ilbu, ilbd, irfu, irfd, irbu, irbd]
     full = [i for i in boxes if i.shape[0] > 0]
     bool = [i.shape[0] > 0 for i in boxes]
-    
+
     return full, b_min, b_max, mid, bool
 
 
 def octree_2(co, bounds=None, idx=None):
-    
+
     # I think there is a way to pass in
     # the bounds of the collision object.
     # too late in the afternoon as I write this...
-    
+
     if bounds is None:
         b_min = np.min(co, axis=0)
         b_max = np.max(co, axis=0)
@@ -450,7 +450,7 @@ def octree_2(co, bounds=None, idx=None):
         b_min = bounds[0]
         b_max = bounds[1]
 
-    if idx is None:    
+    if idx is None:
         idx = np.arange(co.shape[0], dtype=np.int32)
 
     mid = b_min + ((b_max - b_min) / 2)
@@ -496,40 +496,40 @@ def octree_2(co, bounds=None, idx=None):
     boxes = [ilfu, ilfd, ilbu, ilbd, irfu, irfd, irbu, irbd]
     full = [i for i in boxes if i.shape[0] > 0]
     bool = [i.shape[0] > 0 for i in boxes]
-    
-    return full, b_min, b_max, mid, bool    
+
+    return full, b_min, b_max, mid, bool
 
 
 # update the cloth ---------------
 def collide(cloth, colliders):
-    
+
     t = time.time()
-    
+
     if not colliders:
         return
 
     ob = cloth.ob
     co = cloth.co
-    
-    np.copyto(cloth.wco, cloth.co)    
+
+    np.copyto(cloth.wco, cloth.co)
     apply_in_place(ob, cloth.wco)
     min = np.min(cloth.wco, 0)
     max = np.max(cloth.wco, 0)
-        
-    for c in colliders:        
+
+    for c in colliders:
         obc = c.ob
         om = obc.MC_props.outer_margin
         im = obc.MC_props.inner_margin
-                
+
         if obc.data.is_editmode:
             obc.update_from_editmode()
-        
+
         # check for changes. (should just need faces...)
-        proxy = get_proxy(obc)        
+        proxy = get_proxy(obc)
         face_count = len(proxy.polygons)
         if c.face_count != face_count:
             c.refresh()
-        
+
         # refresh vert coords
         proxy.vertices.foreach_get('co', c.pco.ravel())
         obc.to_mesh_clear()
@@ -537,14 +537,14 @@ def collide(cloth, colliders):
 
         minc = np.min(c.pco, 0) - om
         maxc = np.max(c.pco, 0) + om
-        
+
         in_min = min < maxc
         in_max = max > minc
-        
+
         # only check objects whose bounds intersect
         bounds = np.all(in_min & in_max)
-        if bounds:    
-            
+        if bounds:
+
             # only check faces intersecting the cloth bounds.
             tco = c.pco[c.tridex]
 
@@ -563,7 +563,7 @@ def collide(cloth, colliders):
             zminboo = zmin < max[2]
             c.tridexer = c.tridexer[zminboo]
             #print(c.tridexer.shape, "shape end")
-            
+
             #print('y ------------')
             #print(c.tridexer.shape, "shape start")
             ymax = np.max(ty[c.tridexer], 1)
@@ -587,13 +587,13 @@ def collide(cloth, colliders):
 
             print(time.time()-t)
             #return
-            
+
         bmn = np.empty(6, dtype=np.float32)
         bmn.shape = (3,2)
         bmn[:,0] = min
         bmn[:,1] = minc
         bmin = np.sort(bmn, 1)[:, 0]
-        
+
         bmx = np.empty(6, dtype=np.float32)
         bmx.shape = (3,2)
         bmx[:,0] = max
@@ -601,7 +601,7 @@ def collide(cloth, colliders):
         bmax = np.sort(bmx, 1)[:, 0]
 
         ot, min, max, mid, bool = octree_2(co, bounds=[bmin, bmax])
-            
+
         p1 = bpy.data.objects['p1']
         p2 = bpy.data.objects['p2']
         p3 = bpy.data.objects['p3']
@@ -611,18 +611,18 @@ def collide(cloth, colliders):
         p7 = bpy.data.objects['p7']
         p8 = bpy.data.objects['p8']
         #print(cco)
-        
+
         pps = [p1, p2, p3, p4, p5, p6, p7, p8]
-        
+
         for i, j in enumerate(ot):
             pco = get_co(pps[i])
             pco[:] = 0
             pco[np.arange(j.shape[0])] = co[j]
-            
+
             pps[i].data.vertices.foreach_set('co', pco.ravel())
-            pps[i].data.update()    
-        
-        
+            pps[i].data.update()
+
+
         c1 = bpy.data.objects['c1']
         c2 = bpy.data.objects['c2']
         c3 = bpy.data.objects['c3']
@@ -631,35 +631,35 @@ def collide(cloth, colliders):
         c6 = bpy.data.objects['c6']
         c7 = bpy.data.objects['c7']
         c8 = bpy.data.objects['c8']
-        
+
         cs = [c1, c2, c3, c4, c5, c6, c7, c8]
-        
+
         xn, yn, zn = min[0], min[1], min[2]
         xx, yx, zx = max[0], max[1], max[2]
         xd, yd, zd = mid[0], mid[1], mid[2]
-        
+
         b0 = []
-        
-        
-        
-        
+
+
+
+
         cs[0].location = min
         cs[1].location = max
         cs[2].location = mid
-        #we have eight boxes. 
+        #we have eight boxes.
         #they all share the same center: mid
-        #b1 might be 
-        
-        
+        #b1 might be
+
+
 #        using the bounds of the collision
 #        object as the max and min of the octree...
 #        so like and stuff.... if the max of the collision
 #        is poking into the cloth box, I don't need
-#        to check anything but the cloth verts in 
+#        to check anything but the cloth verts in
 #        that box so I could use the box max
 #        as the vert max if I add the margen from
-#        the max and if I substract the margin 
-#        from the min... 
+#        the max and if I substract the margin
+#        from the min...
 #        maybe use either the collider
 #        or the cloth depending on which is smaller?
 #        so like if the avatar feet hang way down
@@ -668,13 +668,13 @@ def collide(cloth, colliders):
 #        but if the cloth is out past the chest
 #        the chest verts + margin make a better box.
 #        We are getting the collider bounds anyway...
-#        
+#
 #        so collider min - margin, collider max + margin
 #        cloth min, cloth max.
-#        
+#
 #        lesser of the two maxes.
-#        greater of the two mins. 
-        
+#        greater of the two mins.
+
 
 
 # universal ---------------------
@@ -1098,7 +1098,7 @@ def get_weights(ob, name, obm=None, default=0, verts=None, weights=None):
 
     if dvert_lay is None: # if there are no assigned weights
         return arr
-    
+
     for v in obm.verts:
         idx = v.index
         dvert = v[dvert_lay]
@@ -1380,7 +1380,7 @@ def tiled_weights(cloth):
     jsc = cloth.plot_counts[cloth.swap_faces]
     cloth.j_tiler = np.hstack([[i] * jsc[i] for i in range(jfps)])
 
-    if False:    
+    if False:
         cloth.js_tris = cloth.j_tris[cloth.j_tiler]
 
     jscf = cloth.full_counts[cloth.swap_faces]
@@ -1458,27 +1458,27 @@ def ab_setup(cloth):
     a,b,c = np.unique(l, return_counts=True, return_inverse=True)
     x = c[b] # number of times each vert occurs
     #cloth.bend_multiplier = 1 / (((x - 2.5) / 2.5) + 2.5)[:, None]
-    if False:    
-        print(x[x == 1].shape, " == 1")    
-        print(x[x == 2].shape, " == 2")    
-        print(x[x == 3].shape, " == 3")    
-        print(x[x == 4].shape, " == 4")    
-        print(x[x == 5].shape, " == 5")    
-        print(x[x == 6].shape, " == 6")    
-        print(x[x == 7].shape, " == 7")    
-        print(x[x == 8].shape, " == 8")    
-    
+    if False:
+        print(x[x == 1].shape, " == 1")
+        print(x[x == 2].shape, " == 2")
+        print(x[x == 3].shape, " == 3")
+        print(x[x == 4].shape, " == 4")
+        print(x[x == 5].shape, " == 5")
+        print(x[x == 6].shape, " == 6")
+        print(x[x == 7].shape, " == 7")
+        print(x[x == 8].shape, " == 8")
+
     #x[x < 4] *= 4
-    
+
 
     x[x < 8] *= 2
-    
+
     #print(x[x > 2], "printign this")
     cloth.bend_multiplier = 1 / x[:, None] #(((x - 2.5) / 2.5) + 2.5)[:, None]
 
     #cloth.bend_multiplier = 1 / (x + (10 / x))[:, None] #(((x - 2.5) / 2.5) + 2.5)[:, None]
     #cloth.bend_multiplier = 1 / ((x / 2) + 1)[:, None] #(((x - 2.5) / 2.5) + 2.5)[:, None]
-    
+
     # multiplying the vertex group here (for some reason...)
     cloth.bend_group_mult = cloth.bend_group[l]
     cloth.bend_multiplier *= cloth.bend_group_mult
@@ -1564,11 +1564,11 @@ def dynamic(cloth):
         p3 = Uc2[cloth.j_tiler] * cloth.d3[:, None]
 
         origin = j_mid[cloth.j_tiler]
-        
+
         if not cloth.is_flat:
             p2 = Uc1[cloth.j_tiler] * cloth.d2[:, None]
             final_plot = p1 + p2 + p3 + origin
-        
+
         if cloth.is_flat:
             final_plot = p1 + p3 + origin
 
@@ -1617,6 +1617,7 @@ def abstract_bend_(cloth):
         cv *= mult
     #print(cloth.bend_multiplier)
     #np.add.at(cloth.co, cloth.sp_ls, np.nan_to_num(cv * stretch))
+    print(np.sum(cv, axis=0))
     np.add.at(cloth.co, cloth.sp_ls, np.nan_to_num(cv))# * stretch))
     return
 
@@ -1881,7 +1882,7 @@ def get_tridex_2(ob, mesh=None): # faster than get_tridex()
         # clear unused tri mesh
         bpy.data.meshes.remove(me)
         return tridex
-    
+
     tobm = bmesh.new()
     tobm.from_mesh(ob.data)
     bmesh.ops.triangulate(tobm, faces=tobm.faces[:])
@@ -2186,14 +2187,14 @@ def manage_vertex_groups(cloth):
 class Collider(object):
     # The collider object
     name = 'inital name'
-    
+
     def __init__(self):
         self.ob = bpy.context.object
         self.name = 'inital name'
-        
+
     def refresh(self):
         # for building the collider data
-        print(self.ob.name, "Object name of collider") 
+        print(self.ob.name, "Object name of collider")
         self.name = "changed name"
         if self.ob.data.is_editmode:
             self.ob.update_from_editmode()
@@ -2203,22 +2204,22 @@ class Collider(object):
         self.pco = np.empty((len(proxy.vertices), 3), dtype=np.float32)
         proxy.vertices.foreach_get('co', self.pco.ravel())
         self.ob.to_mesh_clear()
-    
+
     def soft_refresh(self):
         # consider doing this for cloth and sorting
         # out like vertex groups from changes in geometry.
         print('for changes that do not require full refresh')
-    
+
 
 # cloth instance ---------------
 class Cloth(object):
-    # The cloth object    
+    # The cloth object
     def __init__(self):
         pass
 
     def refresh(self):
         print('plan to move here for sorting')
-        
+
     def soft_refresh():
         # like vertex weights without remaking all the springs
         print('does not require recalculating springs')
@@ -2253,7 +2254,7 @@ def create_instance(ob=None):
         cloth.selected = np.array([True, True], dtype=np.bool)
         return cloth # don't calculate all this crap if we're just caching
 
-    #if not ob.MC_props.p1_bend:    
+    #if not ob.MC_props.p1_bend:
     manage_vertex_groups(cloth)
 
     cloth.update_lookup = False
@@ -2303,10 +2304,10 @@ def create_instance(ob=None):
 
     cloth.wco = np.copy(cloth.co)
     apply_in_place(cloth.ob, cloth.wco)
-            
+
     # abstract bend setup:
-    #if cloth.ob.name == 'mega_tri_mesh':
-    if False:
+    if cloth.ob.name == 'mega_tri_mesh':
+    #if False:
     #if True:
 
         # Bend spring data ()------------------
@@ -2415,9 +2416,9 @@ def update_groups(cloth, obm=None, geometry=False):
 
 
 
-    
-    
-    
+
+
+
 # update the cloth ---------------
 def measure_edges(co, idx, cloth):
     """Takes a set of coords and an edge idx and measures segments"""
@@ -2661,7 +2662,7 @@ def seam_updater(cloth, data):
     #print('tri influence on seams', data['tri_influence'])
     #print("MC_tools.py line 1543 testing influence")
     #vecs = (plot - data['cloth_co'][data['vps']]) * .01# data['tri_influence']
-    
+
     data['cloth_co'][data['vps']] += np.nan_to_num(vecs)
 
     ob.data.shape_keys.key_blocks[cloth_key].data.foreach_set('co', data['cloth_co'].ravel())
@@ -2774,7 +2775,7 @@ def bend_spring_force_U_cross(cloth):
 
 def spring_basic(cloth):
     #t = time.time()
-    
+
     seam_wrangler = cloth.ob.name == 'mega_tri_mesh'
     if seam_wrangler:
         data = bpy.context.scene.seam_wrangler_data
@@ -2810,15 +2811,16 @@ def spring_basic(cloth):
     cloth.co += cloth.velocity
     cloth.vel_zero[:] = cloth.co
     cloth.feedback[:] = cloth.co
-    
-    if cloth.do_bend:
-        if cloth.ob.MC_props.bend > 0:
-            for i in range(cloth.ob.MC_props.bend_iters):
-                abstract_bend_(cloth)
-                if cloth.ob.data.is_editmode:
-                    if bpy.context.scene.MC_props.pause_selected:
-                        cloth.co[cloth.selected] = cloth.select_start[cloth.selected]
-                        cloth.pin_arr[cloth.selected] = cloth.select_start[cloth.selected]
+
+    if not seam_wrangler:
+        if cloth.do_bend:
+            if cloth.ob.MC_props.bend > 0:
+                for i in range(cloth.ob.MC_props.bend_iters):
+                    abstract_bend_(cloth)
+                    if cloth.ob.data.is_editmode:
+                        if bpy.context.scene.MC_props.pause_selected:
+                            cloth.co[cloth.selected] = cloth.select_start[cloth.selected]
+                            cloth.pin_arr[cloth.selected] = cloth.select_start[cloth.selected]
 
     if cloth.ob.MC_props.stretch > 0:
         for i in range(cloth.ob.MC_props.stretch_iters):
@@ -2863,9 +2865,9 @@ def spring_basic(cloth):
 
             # test ====================== bend springs
             # test ====================== bend springs
-            #if seam_wrangler:    
-                #for i in range(cloth.ob.MC_props.bend_iters):
-                    #bend_spring_force_mixed(cloth)
+            if seam_wrangler:
+                for i in range(cloth.ob.MC_props.bend_iters):
+                    bend_spring_force_mixed(cloth)
             # test ====================== bend springs
             # test ====================== bend springs
 
@@ -3065,7 +3067,7 @@ def cloth_physics(ob, cloth, colliders):
         if cloth.ob.MC_props.play_cache:
             play_cache(cloth)
             return
-        
+
         for i in range(cloth.ob.MC_props.sub_frames):
             spring_basic(cloth)
 
@@ -3136,7 +3138,7 @@ def update_cloth(type=0):
 
     # check collision objects
     colliders = [i[1] for i in MC_data['colliders'].items() if i[1].ob.MC_props.collider]
-            
+
     for cloth in cloths:
         cloth_physics(cloth.ob, cloth, colliders)
 
@@ -3537,7 +3539,7 @@ def cb_collider(self, context):
 
         MC_data['colliders'][id_number] = collider
         print('created collider instance')
-        
+
         ob['MC_collider_id'] = id_number
         print(MC_data['colliders'])
         return
@@ -3680,7 +3682,7 @@ def manage_pin_group(cloth):
                     mod.settings.pin_stiffness = 1.0
                     mod.settings.air_damping = 10
                     air.mute = True
-        
+
             return
 
     # on frames where we don't run -----------------------
@@ -3814,7 +3816,7 @@ def cb_p1_bend_trigger(self, context):
     cloth.active_key.data.foreach_set('co', cloth.co.ravel())
     ob.data.update()
     print(time.time() - t, "bend solver time")
-    
+
 
 # calback functions ----------------
 # object:
@@ -4536,7 +4538,7 @@ class PANEL_PT_modelingClothMain(PANEL_PT_MC_Master, bpy.types.Panel):
         col = layout.column(align=True)
         col.scale_y = 1.5
         col.prop(ob.MC_props, "collider", text="Collide", icon='MOD_PHYSICS')
-        if ob.MC_props.collider:    
+        if ob.MC_props.collider:
             row = col.row()
             #col = layout.column(align=True)
             row.scale_y = 0.75
@@ -4957,9 +4959,9 @@ def octree__(co, margin=0.001, idx=None):
     b_max = np.max(co, axis=0)
     mid = b_min + ((b_max - b_min) / 2)
     x, y, z = mid[0], mid[1], mid[2]
-    
+
     # l = left, r = right, f = front, b = back, u = up, d = down
-    if idx is None:    
+    if idx is None:
         idx = np.arange(co.shape[0], dtype=np.int32)
 
     boxes = []
