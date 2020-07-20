@@ -2772,20 +2772,114 @@ def bend_spring_force_U_cross(cloth):
     np.add.at(cloth.co, cloth.bend_tri_tips, cv)
     np.subtract.at(cloth.co, cloth.bend_edges.ravel(), cv)
 
+def spring_basic_no_sw(cloth):
+
+    # get properties
+    grav = cloth.ob.MC_props.gravity * 0.001
+    vel = cloth.ob.MC_props.velocity
+    feedback_val = cloth.ob.MC_props.feedback
+    stretch = cloth.ob.MC_props.stretch * 0.5
+    push = cloth.ob.MC_props.push
+
+    # !!! Optimize here ============================================
+    # measure source
+
+    v, d, l = cloth.vdl
+    #dynamic = False
+    #if dynamic:
+        # !!! don't need to run this all the time. Can get a speed improvement here
+        #   by caching these values and running them when other updates run
+        #v, d, l = stretch_springs_basic(cloth, cloth.target) # from target or source key
+
+    cloth.select_start[:] = cloth.co
+
+    cloth.co += cloth.velocity
+    cloth.vel_zero[:] = cloth.co
+    cloth.feedback[:] = cloth.co
+
+    if cloth.do_bend:
+        if cloth.ob.MC_props.bend > 0:
+            for i in range(cloth.ob.MC_props.bend_iters):
+                abstract_bend_(cloth)
+                if cloth.ob.data.is_editmode:
+                    if bpy.context.scene.MC_props.pause_selected:
+                        cloth.co[cloth.selected] = cloth.select_start[cloth.selected]
+                        cloth.pin_arr[cloth.selected] = cloth.select_start[cloth.selected]
+
+    if cloth.ob.MC_props.stretch > 0:
+        for i in range(cloth.ob.MC_props.stretch_iters):
+
+            # (current vec, dot, length)
+            cv = measure_edges(cloth.co, cloth.basic_set, cloth) # from current cloth state
+            cd = cloth.measure_dot
+            cl = cloth.measure_length
+
+            move_l = (cl - l) * stretch
+
+            if not cloth.skip_stretch_wieght:
+                move_l *= cloth.stretch_group_mult.ravel()
+
+            # separate push springs
+            if push != 1:
+                push_springs = move_l < 0
+                move_l[push_springs] *= push
+
+            # !!! here we could square move_l to accentuate bigger stretch
+            # !!! see if it solves better.
+
+            # mean method -------------------
+            cloth.stretch_array[:] = 0.0
+
+            rock_hard_abs = np.abs(move_l)
+            np.add.at(cloth.stretch_array, cloth.basic_v_fancy, rock_hard_abs)
+            weights = rock_hard_abs / cloth.stretch_array[cloth.basic_v_fancy]
+            # mean method -------------------
+
+            # apply forces ------------------
+            #if False:
+            move = cv * (move_l / cl)[:,None]
+
+            move *= weights[:,None]
+
+            np.add.at(cloth.co, cloth.basic_v_fancy, np.nan_to_num(move))
+
+            # apply surface sew for each iteration:
+            if cloth.surface:
+                surface_forces(cloth)
+
+            # add pin vecs ------------------
+            pin_vecs = (cloth.pin_arr - cloth.co)
+            cloth.co += (pin_vecs * cloth.pin)
+            if cloth.ob.data.is_editmode:
+                #if cloth.ob.MC_props.pause_selected:
+                cloth.co[cloth.selected] = cloth.select_start[cloth.selected]
+                cloth.pin_arr[cloth.selected] = cloth.select_start[cloth.selected]
+
+    spring_move = cloth.co - cloth.feedback
+    v_move = cloth.co - cloth.vel_zero
+
+    cloth.velocity += v_move
+    cloth.velocity += spring_move * feedback_val
+    cloth.velocity *= vel
+
+    cloth.velocity[:,2] += grav
+    #cloth.velocity[:,2] += (grav * (-cloth.pin + 1).ravel())
+
 
 def spring_basic(cloth):
     #t = time.time()
 
     seam_wrangler = cloth.ob.name == 'mega_tri_mesh'
-    if seam_wrangler:
-        data = bpy.context.scene.seam_wrangler_data
-        type = data['run_type']
-        if type == 1:
-            if cloth.current_iter == 0:
-                b_log(['running seam position. cloth.current_iter:', cloth.current_iter])
-                seam_position(cloth, data)
-            if cloth.current_iter < 3:
-                pure_linear(cloth, data)
+    if False:    
+        if seam_wrangler:
+            data = bpy.context.scene.seam_wrangler_data
+            type = data['run_type']
+            if type == 1:
+                if cloth.current_iter == 0:
+                    b_log(['running seam position. cloth.current_iter:', cloth.current_iter])
+                    seam_position(cloth, data)
+                if cloth.current_iter < 3:
+                    pure_linear(cloth, data)
 
         #MC_data['count'] += 1
 
@@ -3071,7 +3165,7 @@ def cloth_physics(ob, cloth, colliders):
             return
 
         for i in range(cloth.ob.MC_props.sub_frames):
-            spring_basic(cloth)
+            spring_basic_no_sw(cloth)
 
         if cloth.ob.MC_props.detect_collisions:
             collide(cloth, colliders)
@@ -3107,7 +3201,7 @@ def cloth_physics(ob, cloth, colliders):
         return
 
     for i in range(cloth.ob.MC_props.sub_frames):
-        spring_basic(cloth)
+        spring_basic_no_sw(cloth)
 
     if cloth.ob.MC_props.detect_collisions:
         collide(cloth, colliders)
@@ -3334,6 +3428,19 @@ def cb_seam_wrangler(self, context):
     #iters = 7
 
     cloth.last_iter = iters
+    
+    type = data['run_type']
+    if type == 1:
+        if cloth.current_iter == 0:
+            b_log(['running seam position. cloth.current_iter:', cloth.current_iter])
+            seam_position(cloth, data)
+        if cloth.current_iter < 3:
+            pure_linear(cloth, data)
+        
+        # try to get rid of the twist
+        for i in range(400):
+            spring_basic_no_sw(cloth)
+    
     for i in range(iters):
         cloth.current_iter = i
         spring_basic(cloth)
@@ -3804,7 +3911,7 @@ def cb_p1_bend_trigger(self, context):
     iters = 1
 
     for i in range(iters):
-        spring_basic(cloth)
+        spring_basic_no_sw(cloth)
 
     if cloth.active_key is None:
         print('active key is None. Using temp key')
