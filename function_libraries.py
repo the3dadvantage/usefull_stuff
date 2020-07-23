@@ -1,3 +1,12 @@
+def bmesh_proxy(ob):
+    """Get a bmesh contating modifier effects"""
+    dg = bpy.context.evaluated_depsgraph_get()
+    prox = ob.evaluated_get(dg)
+    proxy = prox.to_mesh()    
+    obm = bmesh.new()
+    obm.from_mesh(proxy)
+    return obm
+
 
 def select_edit_mode(ob, verts, obm=None):
     """Selects verts in edit mode and updates"""
