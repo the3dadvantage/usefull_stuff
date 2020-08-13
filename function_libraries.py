@@ -1,3 +1,18 @@
+def read_flap_target():
+    import bpy
+    import json
+    ob = bpy.data.objects['g8193']
+
+    file = bpy.data.texts['flap_ptrs.json']
+    slices = json.loads(file.as_string())
+
+    for k, v in slices.items():
+        for ve in v:
+            ob.data.vertices[ve].select = True
+
+        ob.data.update()
+        #error 
+
 def bmesh_proxy(ob):
     """Get a bmesh contating modifier effects"""
     dg = bpy.context.evaluated_depsgraph_get()
