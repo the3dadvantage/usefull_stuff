@@ -1,3 +1,62 @@
+## =============================== ##
+## =============================== ##
+# play mega tri mesh cache
+# !!! don't forget to delete shape keys !!!
+import bpy
+import numpy as np
+
+
+def get_proxy_co(ob, co=None, proxy=None):
+    """Gets co with modifiers like cloth"""
+    if proxy is None:
+        dg = bpy.context.evaluated_depsgraph_get()
+        prox = ob.evaluated_get(dg)
+        proxy = prox.to_mesh()
+
+    if co is None:
+        vc = len(proxy.vertices)
+        co = np.empty((vc, 3), dtype=np.float32)
+
+    proxy.vertices.foreach_get('co', co.ravel())
+    ob.to_mesh_clear()
+    return co
+
+
+def np_co_to_text(ob, co, rw='w'):
+    """Read or write cache file"""
+    name = ob.name + 'cache.npy'
+    
+    if rw == 'w':
+        if name not in bpy.data.texts:
+            bpy.data.texts.new(name)
+        
+        txt = bpy.data.texts[name]
+        np.savetxt(txt, co)
+        
+        return
+    
+    vc = len(ob.data.vertices)
+    txt = bpy.data.texts[name].as_string()
+    frame = bpy.context.scene.frame_current
+    start = (frame -1) * vc * 3
+    
+    co = np.fromstring(txt, sep='\n')[start: start + (vc * 3)]
+    co.shape = (co.shape[0]//3, 3)
+
+    ob.data.vertices.foreach_set('co', co.ravel())
+    ob.data.update()
+
+    
+def play_internal_cache(scene):
+    ob = bpy.data.objects['Cube']
+    np_co_to_text(ob, co=None, rw='r')
+
+
+bpy.app.handlers.frame_change_post.append(play_internal_cache)
+## =============================== ##
+## =============================== ##
+
+
 def read_flap_target():
     import bpy
     import json
