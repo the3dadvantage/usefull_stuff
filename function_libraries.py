@@ -106,6 +106,10 @@ def eliminate_duplicate_pairs(ar):
     y = a @ x
     unique, index = np.unique(y, return_index=True)
     return a[index]
+    # or
+    strs = [str(e) + str(t) for e, t in zip(a[:,0], a[:,1])]
+    uni = np.unique(strs, return_index=True)[1]
+
 
 
 def tree(co, margin=0.001, _idx=None):
