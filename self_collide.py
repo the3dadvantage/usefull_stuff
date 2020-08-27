@@ -1,6 +1,10 @@
-import bpy
+try:
+    import bpy
+    import bmesh
+except ImportEroor:
+    pass
+
 import numpy as np
-import bmesh
 import time
 import json
 
