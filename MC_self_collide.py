@@ -250,11 +250,10 @@ def octree_et(sc, margin, idx=None, eidx=None, bounds=None):
         idx = sc.tridex
     if eidx is None:    
         eidx = sc.eidx
-    
-    
+
     idx = np.array(idx, dtype=np.int32)
     eidx = np.array(eidx, dtype=np.int32)
-    #print(idx.dtype, "what the heck man???")
+
     # -------------------------------
     B = xmin[idx] < x_# + margin
     il = idx[B]
@@ -420,7 +419,6 @@ def self_collisions_7(sc, margin=0.1):
     limit = 3
     count = 0
     while len(sc.big_boxes) > 0:
-        print(count)
         b2(sc)
         if sc.report:    
             print("recursion level:", count)
@@ -483,24 +481,48 @@ def self_collisions_7(sc, margin=0.1):
         T = time.time()
         
         if rt.shape[0] > 0:
+            
             sc.ees += re.tolist()
             sc.trs += rt.tolist()
+    
+    return
+    # get uniqe pairs of edges and faces
+    # !!! need to test that code for duplicate pairs to see if it's faster !!!
+    
+
+    #j = np.array(sc.ees + sc.trs)
+    #j.shape = 
+    
+    if True:
+        a = np.empty((len(sc.ees), 2), dtype=np.int32)
+        a[:, 0] = sc.ees
+        a[:, 1] = sc.trs
+
+    if False:    
+        a = np.concatenate((np.array(sc.ees)[:,None], np.array(sc.trs)[:,None]), 1)
+    
+    x = np.random.rand(a.shape[1])
+    y = a @ x
+    unique, index = np.unique(y, return_index=True)
+    uni = index#np.unique(strs, return_index=True)[1]    
+
+    #print(sc.ees.shape, "total size")    
+    #return
+
+    #strs = [str(e) + str(t) for e, t in zip(sc.ees, sc.trs)]
+    #uni = np.unique(strs, return_index=True)[1]
+
+    sc.ees = np.array(sc.ees)[uni]
+    sc.trs = np.array(sc.trs)[uni]
+    #print(sc.ees.shape, "total size")
 
 
 def ray_check(sc, ed, trs, cloth):
     
     e = sc.edges[ed]
     tris = sc.tris[trs]
-    #print(trs)
-    #print(ed)
-    #print()
-    #print()
-    #print()
-    #for t in trs:
         
     tv = [[v for v in sc.ob.data.polygons[t].vertices] for t in trs]
-    #print(trs, 'faces trs')
-    #print(ed, "this is ed")
     
     ori1 = tris[:, 0]
     ori2 = tris[:, 3]
@@ -529,17 +551,8 @@ def ray_check(sc, ed, trs, cloth):
     move = d2 * pos_neg # * 1.1
     col = move < sc.M
     
-    
-    
-    #col = np.sign(d1) != np.sign(d2)
-    #print(col)
-    
     if np.any(col):
         idx = np.array(ed)[col]
-        #cloth.co[idx] = cloth.select_start[idx]
-        #print(np.array(ed).shape, col.shape)
-        #print(tris[:, :3])
-        #print(cloth.co[idx])
         
 #        getting weights on first tri makes it behave
 #        like friction. Second tri no friction.
@@ -547,39 +560,18 @@ def ray_check(sc, ed, trs, cloth):
 #        to plot instead of making a vec and going towards plot
 #        Cant figure out the difference Needs thought...
         
-
-        
-        friction = True
+        friction = False
         if friction:    
             check_b, weights_b = inside_triangles(tris[:, :3][col], cloth.select_start[idx], margin= -sc.M)
             check, weights = inside_triangles(tris[:, 3:][col], cloth.select_start[idx], margin= -sc.M)
+            check = check | check_b
+
         else:
             check, weights = inside_triangles(tris[:, 3:][col], cloth.select_start[idx], margin= -sc.M)
-        check = check | check_b
-        #weights = (weights_b + weights) / 2
-        #cloth.co[idx] = cloth.select_start[idx]
-        #print(tris[:, 3:][col])
-        #print(weights)
+
         plot = tris[:, 3:][col] * weights[:, :, None]
-
-        #print((unb * d2[:, None])[col][check].shape, "unb")
-        #sua = (unb * d2[:, None])[col][check]
-        #sua = unb[col][check] * d2[col][check][:, None]
-        
-        
         su = np.sum(plot[check], axis=1)
-        #surf = unb[col][check] * sc.M * pos_neg[col][check][:, None]
 
-        
-        
-        #print(su.shape, "su")
-        #this = unb * move[:, None]
-        #print(su.shape)
-        #print(plot.shape)
-        #print(cloth.co[idx].shape)
-        
-        #print(plot,"this is plot", col)
-        #
         test = False
         if test:
             suu = su + surf
@@ -590,183 +582,41 @@ def ray_check(sc, ed, trs, cloth):
         co_pre = cloth.co[idx_check]
         vec = su - co_pre
         surf = unb[col][check] * sc.M * pos_neg[col][check][:, None]
-        
-        
-        
-        #cloth.co[idx[check]] += ((vec + surf) * .9)
-        
+
         uni, inv, counts = np.unique(idx_check, return_inverse=True, return_counts=True)
         
         div = counts[inv][:, None]
-        #print(div, "this is div")
-                
-        
-        shift = ((vec + surf) / div) * sc.force
-        #shift = ((vec + surf)) * sc.force
             
-        cv_ = False    
+        cv_ = True
         if cv_:    
             cv = vec# + surf
             
             move_l = np.sqrt(np.einsum('ij,ij->i', cv, cv))
             stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32)
             np.add.at(stretch_array, idx[check], move_l)
-            #print(idx[check])
-            #print(idx[check].shape, "shape")
+
             this = stretch_array[idx[check]] / counts[inv]
             this2 = move_l / this
             cv *= this2[:, None]
             cv /= counts[inv][:, None]
 
-            cv *= sc.force
-            cv += (surf / div)
 
-        #print('===========================')
-        #error
-        
-        
-#        get the counts of vert occurrence.
-#        get the sum of the lengths each vert should move
-#        divide the sum by the counts.
-#        (so total len is 2. 2/4 is .5)
-#        (one vec has a len of 2 the others are zero)
-#        (the one that is 2 gets multiplied by (2/.5)
-#        (making it 8/4 so 2 and we don't lose the
-#        (length because of the zero vec divs.)
-        
-        
-        
-        
-        #stretch_array / div
-        #mean_method(cloth, move_l, idx[check], cv)
-        
+            cv += (surf / div)
+            cv *= sc.force
 
         if not cv_:    
+            shift = ((vec + surf) / div) * sc.force
             np.add.at(cloth.co, idx_check, shift)
         else:
             np.add.at(cloth.co, idx[check], cv)
-        
+
+
         co_post = cloth.co[idx_check]
         dif = co_post - co_pre
         cloth.velocity[idx_check] += dif
-        damping = 1
+        damping = cloth.ob.MC_props.sc_vel_damping
         cloth.velocity[idx_check] *= damping
         #cloth.velocity[idx[check]] = 0
-
-
-#        !!! consider doing the same
-#        !!! as on the springs
-#        we are dividing based
-#        on multiple occurences of
-#        verts. Really we have
-#        face vert combos.
-#        could have a face vert
-#        that is almost zero
-#        its still contributing to
-#        div so the vec ends up
-#        to small. need to use
-#        a weigted average.
-         
-        
-        
-        
-        #cloth.co[idx[check]] += ((vec + surf) * .9)
-        
-        #print(uni, 'uni')
-        #print(counts, 'counts')
-        #print(inv, "inv")
-        
-        #print(idx[check])
-        #tr = np.array(trs)[idx[check]]
-        #for i in range(tr.shape[0]):
-        #print(idx[check], "idx check")
-            #print(tr[i])
-
-        #trid = np.array([[v for v in cloth.ob.data.polygons[p].vertices] for p in trs])
-        #print(trid)
-
-        #print('==================== new ====================')
-        return
-        for i in range(trid.shape[0]):
-            fail = np.any(trid[i] == ed[i])
-            if fail:
-                print('fail')
-            #print(trid[i])
-            #print(ed[i])
-        #print(idx[check].shape, "idx check shape")
-        #print(trid.shape, "trid shape")
-        return
-        
-        sames = np.any((idx[check])[:, None] == trid, axis=1)
-        print(sames, "sames")
-        print(idx[check].shape, "idx check shape")
-        
-        print(sames.shape, "sames shape")        
-        cloth.co[idx[check][~sames]] += (vec + surf)[~sames]
-        
-        
-        cloth.velocity[idx[check][~sames]] = 0
-
-        #cloth.co[idx][check]
-        
-    #print()
-    #print(e.shape)
-    #print(norms_a.shape)
-    
-    # point at start is on which side of
-    # tri at start.
-    
-    # if start is on the other side
-    # call it a collision    
-    
-    return
-    origins = tris[:, 0]
-    
-    ev0 = e[:, 0] - origins
-    ev1 = e[:, 1] - origins
-    
-    cross_vecs = tris[:, 1:] - origins[:, None]
-    tv0 = cross_vecs[:, 0]
-    tv1 = cross_vecs[:, 1]
-        
-    norms = np.cross(tv0, tv1)
-    
-    d0d = np.einsum('ij,ij->i', norms, ev0)
-    d0 = np.sign(d0d)
-    d1 = np.sign(np.einsum('ij,ij->i', norms, ev1))
-    
-    # check if edge verts are on opposite sides of the face
-    in_edge = d0 != d1
-    if np.any(in_edge):
-
-        e_vec = sc.vecs[ed]
-
-        e_dot = np.einsum('ij,ij->i', norms, e_vec)
-        scale = d0d / e_dot
-
-        #in_edge = (scale < 0) & (scale > -1)
-        on_plane = (ev0 - e_vec * scale[:, None]) + origins
-
-        in_tri = inside_triangles(tris[in_edge], on_plane[in_edge], cross_vecs[in_edge])
-        
-        sc.has_col = False
-        if np.any(in_tri):            
-            sc.has_col = True
-            sc.trc = np.array(trs, dtype=np.int32)[in_edge][in_tri]
-            sc.edc = np.array(ed, dtype=np.int32)[in_edge][in_tri]
-            sc.on_plane = on_plane[in_edge][in_tri]
-            sc.scale = scale[in_edge][in_tri]
-            # selecting ---------
-            if sc.sel:
-                # edit mode
-                select_edit_mode(sc, sc.ob, sc.edc, type='e', obm=sc.obm)
-                select_edit_mode(sc, sc.ob, sc.trc, type='f', obm=sc.obm)
-                # object mode
-                for e in sc.edc:    
-                    sc.ob.data.edges[e].select = True
-                for t in sc.trc:
-                    #bpy.context.scene.self_collisions.append([ed, t])                    
-                    sc.ob.data.polygons[t].select = True
 
 
 class self_collide():
@@ -780,22 +630,19 @@ class self_collide():
         self.eidx = precalc['eidx']
         self.fa = precalc['fa']
         self.v_count = precalc['v_count']
-        c = self.v_count
         self.indexer = precalc['indexer']
-        self.box_max = precalc['box_max']
+        #self.box_max = precalc['box_max']
+        self.box_max = self.ob.MC_props.sc_box_max
         self.co = precalc['co']
-
-        self.vecs = self.co[self.ed[:, 1]] - self.co[self.ed[:, 0]]
-        self.tris_start = self.co[self.fa]
-        self.tris_end = self.co[:c][self.fa]
+        
+        #self.vecs = self.co[self.ed[:, 1]] - self.co[self.ed[:, 0]]
+        #self.tris_start = self.co[self.fa]
+        c = self.v_count
+        #self.tris_end = self.co[:c][self.fa]
         self.M = self.ob.MC_props.self_collide_margin
         self.force = self.ob.MC_props.self_collide_force
         
-        
         self.tris = precalc['tris_six']
-        
-        
-        
         self.edges = self.co[self.ed]
         self.big_boxes = [] # boxes that still need to be divided
         self.small_boxes = [] # finished boxes less than the maximum box size
@@ -854,24 +701,13 @@ def detect_collisions(cloth):
     precalc['tris_six'][:, :3] = co_start[fa]
     precalc['tris_six'][:, 3:] = co_end[fa]
     
-    #print(precalc['tris_six'])
     sc = self_collide(precalc)
     t = time.time()
 
-
     self_collisions_7(sc, sc.M)
-        
-    #print(sc.ees)
-    #return
 
     ray_check(sc, sc.ees, sc.trs, cloth)
-    
-    # collisions:
-    #if sc.has_col: # might not be any collisions
-        #print(sc.edc.shape)
-        #print(sc.trc.shape)
-    # -----------
-    
+        
     if sc.report:
         print(sc.box_max, "box max")
         print(np.sum(sc.select_counter > 1), ": In too many boxes")
@@ -883,10 +719,6 @@ def detect_collisions(cloth):
             bmesh.update_edit_mesh(ob.data)
             
         ob.data.update()
-
-    #if sc.has_col:
-        #sc_response(sc, co, 'MC_current', cloth)
-        
 
 
 '''
