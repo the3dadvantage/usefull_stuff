@@ -1925,6 +1925,7 @@ def get_tridex_2(ob, mesh=None): # faster than get_tridex()
 
         # clear unused tri mesh
         bpy.data.meshes.remove(me)
+        tobm.free()
         return tridex
 
     tobm = bmesh.new()
@@ -1940,6 +1941,21 @@ def get_tridex_2(ob, mesh=None): # faster than get_tridex()
     bpy.data.meshes.remove(me)
 
     return tridex, tobm
+
+
+def get_sc_edges(ob, fake=False):
+    """Edge indexing for self collision"""
+    if fake:
+        c = len(ob.data.vertices)
+        ed = np.empty((c, 2), dtype=np.int32)
+        idx = np.arange(c * 2, dtype=np.int32)
+        ed[:, 0] = idx[:c]
+        ed[:, 1] = idx[c:]
+        return ed
+    
+    ed = np.empty((len(ob.data.edges), 2), dtype=np.int32)
+    ob.data.edges.foreach_get('vertices', ed.ravel())
+    return ed
 
 
 def get_bend_sets(cloth):
@@ -2135,30 +2151,169 @@ def virtual_springs(cloth):
     # !!! Could also use a separate object for fixed sewing !!!
 
 
+def get_sew_springs(cloth):
+    obm = cloth.obm
+    cloth.sew_edges = [e.index for e in obm.edges if len(e.link_faces) == 0]
+    
+    sew_verts = np.array([[v.index for v in obm.edges[e].verts] for e in cloth.sew_edges])
+    uni, inverse, counts = np.unique(sew_verts.ravel(), return_counts=True, return_inverse=True)
+    sew_counts = counts[inverse]
+    sew_counts.shape = sew_verts.shape
+    
+    summed = np.sum(sew_counts, axis=1)
+    
+    multi = summed > 2
+
+    groups = None
+    if np.any(multi):
+        sew_pairs = sew_verts[~multi]
+        sew_verts = sew_verts[multi]
+
+        booly = np.ones(sew_verts.shape[0], dtype=np.bool)
+        idxer = np.arange(sew_verts.shape[0], dtype=np.int32)
+
+        groups = []
+        for i in range(sew_verts.shape[0]):
+            
+            sw = sew_verts[i]
+            joined = [sw[0], sw[1]]
+            booly[0] = False
+            for id, sw2 in zip(idxer[booly], sew_verts[booly]):
+                
+                if np.any(np.in1d(sw, sw2)):
+                    joined += sw2.tolist()
+                    booly[id] = False
+                
+            uni = np.unique(joined)
+            if uni.shape[0] > 2:
+                groups.append(uni)
+
+        sew_verts = np.array(groups)
+
+        booly = np.ones(sew_verts.shape[0], dtype=np.bool)
+        idxer = np.arange(sew_verts.shape[0], dtype=np.int32)
+
+        groups = []
+        for i in range(sew_verts.shape[0]):
+            if booly[i]:
+                sw = sew_verts[i]
+                joined = sw.tolist()
+                booly[0] = False
+                for id, sw2 in zip(idxer[booly], sew_verts[booly]):
+
+                    if np.any(np.in1d(sw, sw2)):
+                        joined += sw2.tolist()
+                        booly[id] = False
+                    
+                uni = np.unique(joined)
+                groups.append(uni)
+    
+    for g in groups:
+        print(g)            
+    
+    #if groups is not None:
+    
+    
+    print(len(groups), "number of groups")
+    print(sew_pairs.shape[0], "number of pairs")
+    
+    mean_count = len(groups) + sew_pairs.shape[0]
+    
+    sew_mean = np.zeros((mean_count, 3), dtype=np.float32)
+    print(sew_mean)
+    
+    x = np.arange(sew_pairs.shape[0])
+    pair_idx = np.concatenate((x[:,None], x[:, None]), 1).ravel()
+    
+    gidx = []
+    
+    print(sew_pairs.shape[0], "pair shaped")
+    count = sew_pairs.shape[0]
+    for i in groups:
+        c = len(i)
+        gidx += ([count] * c)
+        
+        count += 1
+    
+    print(gidx, "gidx")
+        
+    sew_mean_idx = pair_idx.tolist() + gidx
+    
+    div = np.array(([2] * sew_pairs.shape[0]) + [len(g) for g in groups], dtype=np.float32)[:, None]
+    print(div, "this is div")
+    print(sew_mean_idx, "sew_mean_idx")
+    
+    #return
+    stacked = np.hstack(groups)    
+    all_sew = sew_pairs.ravel().tolist() + stacked.tolist()
+    
+    
+    
+    #print(all_sew, "all_sew is the thing")
+    
+    #co = np.empty((len(cloth.ob.data.vertices), 3), dtype=np.float32)
+    #cloth.ob.data.vertices.foreach_get('co', co.ravel())
+    co = np.array([v.co for v in obm.verts], dtype=np.float32)
+    
+    #print
+    print(sew_mean.shape, "sew mean shape")
+    print(sew_mean_idx, "sew mean idx")
+    print(co.shape, "co shape")
+    print(all_sew, "all sew")
+
+    cloth.sew_mean = sew_mean
+    cloth.sew_mean_idx = sew_mean_idx    
+    cloth.all_sew = all_sew
+    cloth.sew_div = div
+
+    np.add.at(cloth.sew_mean, cloth.sew_mean_idx, co[cloth.all_sew])
+    means = sew_mean / cloth.sew_div
+    vecs = (means[sew_mean_idx] - co[all_sew]) * cloth.ob.MC_props.sew_force
+        
+    
+
+
+    print(means[sew_mean_idx] - co[all_sew])
+
+    bpy.data.objects['e'].location = means[-3]
+    
+    #print(sew_mean_idx, "this is gidx")
+    #print(pair_idx, "pair idx")
+    cloth.sew_pairs = sew_pairs
+    cloth.sew_groups = groups
+
+    return sew_pairs, groups
+
+
+def sew_force(cloth):
+    
+    cloth.sew_mean[:] = 0.0
+    np.add.at(cloth.sew_mean, cloth.sew_mean_idx, cloth.co[cloth.all_sew])
+    means = cloth.sew_mean / cloth.sew_div
+    vecs = (means[cloth.sew_mean_idx] - cloth.co[cloth.all_sew]) * cloth.ob.MC_props.sew_force
+    cloth.co[cloth.all_sew] += vecs
+    
+
 def get_springs_2(cloth):
     """Create index for viewing stretch springs"""
     obm = cloth.obm
-    obm.verts.ensure_lookup_table()
+    #obm.verts.ensure_lookup_table()
 
     if not cloth.do_stretch:
         return
 
-
     TT = time.time()
-    verts = np.arange(len(obm.verts))[cloth.linear_cull.ravel()]
     ed = []
-    for vc in verts:
-        v = obm.verts[vc]
-        #if cloth.linear_cull[v.index]:
-        v_set = []
-        for f in v.link_faces:
-            for vj in f.verts:
-                if vj != v:
-                    stri = str(v.index) + str(vj.index)
-                    if stri not in v_set:
-                        ed.append([vc, vj.index])
-                        v_set.append(stri)
-
+    for v in obm.verts:
+        if cloth.linear_cull[v.index]:
+            v_set = []
+            for f in v.link_faces:
+                for vj in f.verts:
+                    if vj != v:
+                        stri = str(v.index) + str(vj.index)
+                        if stri not in v_set:
+                            ed.append([v.index, vj.index])
+                            v_set.append(stri)
 
     cloth.basic_set = np.array(ed)
     cloth.basic_v_fancy = cloth.basic_set[:,0]
@@ -2217,7 +2372,9 @@ def manage_vertex_groups(cloth):
     if np.any(cloth.linear_cull):
         cloth.do_stretch = True
         get_springs_2(cloth)
-
+    
+    get_sew_springs(cloth)
+    
     cloth.skip_bend_wieght = np.all(cloth.bend_group == 1) # for optimizing by elimating multiplier
     cloth.skip_stretch_wieght = np.all(cloth.stretch_group == 1) # for optimizing by elimating multiplier
     # when running in p1 just write to these two groups
@@ -2283,6 +2440,8 @@ def create_instance(ob=None):
     cloth.ob = ob
 
     cloth.obm = get_bmesh(cloth.ob)
+    cloth.obm.verts.ensure_lookup_table()
+    cloth.obm.edges.ensure_lookup_table()
 
     cloth.p1_trigger = False
 
@@ -2409,6 +2568,14 @@ def create_instance(ob=None):
 
         cloth.vdl = stretch_springs_basic(cloth, cloth.target)
 
+    if doing_self_collisions:
+        cloth.tridex = get_tridex_2(ob, mesh=ob.data)
+        cloth.sc_edges = get_sc_edges(ob, fake=True)
+        cloth.sc_eidx = np.arange(len(ob.data.vertices), dtype=np.int32)
+        cloth.sc_indexer = np.arange(cloth.tridex.shape[0], dtype=np.int32)
+        cloth.tris_six = np.empty((cloth.tridex.shape[0], 6, 3), dtype=np.float32)
+        cloth.sc_co = np.empty((cloth.co.shape[0] * 2, 3), dtype=np.float32)
+        cloth.v_count = len(ob.data.vertices)
     return cloth
 
 # ^                                                          ^ #
@@ -2953,10 +3120,12 @@ def spring_basic_no_sw(cloth):
 
     cloth.velocity += v_move
     cloth.velocity += spring_move * feedback_val
-    cloth.velocity *= vel
-
     cloth.velocity[:,2] += grav
     #cloth.velocity[:,2] += (grav * (-cloth.pin + 1).ravel())
+    
+    # sewing -------------------
+    sew_force(cloth)
+    # sewing -------------------
     
     #t = time.time()
     if cloth.ob.MC_props.self_collide:
@@ -2970,7 +3139,8 @@ def spring_basic_no_sw(cloth):
             cloth.co[cloth.selected] = cloth.select_start[cloth.selected]
             cloth.pin_arr[cloth.selected] = cloth.select_start[cloth.selected]
     #print(time.time()-t, "total self collide time")
-    
+    cloth.velocity *= vel
+        
 
 def spring_basic(cloth):
     #t = time.time()
@@ -3218,60 +3388,29 @@ def cloth_physics(ob, cloth, colliders):
                 refresh(cloth)
                 return
 
-                np.copyto(cloth.pin_arr, cloth.co)
-                #cloth.springs, cloth.v_fancy, cloth.e_fancy, cloth.flip = get_springs(cloth, cloth.obm)
-                get_springs_2(cloth)
-                get_bend_sets(cloth)
-                cpoe_bend_plot_values(cloth)
-                cloth.geometry = get_mesh_counts(ob, cloth.obm)
-                # cloth.sew_springs = get_sew_springs() # build
-                cloth.obm.verts.ensure_lookup_table()
-                cloth.co = get_co_edit(ob)
-                cloth.select_start = np.copy(cloth.co)
-                cloth.stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32)
-                cloth.selected = np.array([v.select for v in cloth.obm.verts])
-
-                update_groups(cloth, cloth.obm, True)
-                cloth.ob.update_from_editmode()
-                cloth.obm.verts.ensure_lookup_table()
-                cloth.vdl = stretch_springs_basic(cloth, cloth.target)
-            # updating the mesh coords -----------------@@
-            # detects user changes to the mesh like grabbing verts
-            #t = T()
-
-            #T(t, "list comp")
-
         # if we switch to a different shape key in edit mode:
-
         if not cloth.ob.MC_props.cache_only:
             index = ob.data.shape_keys.key_blocks.find('MC_current')
             if ob.active_shape_key_index != index:
                 cloth.shape_update = True
                 return
 
-        cloth.ob.update_from_editmode()
-
+        
         #cloth.co = np.array([v.co for v in cloth.obm.verts])
 
         if not cloth.ob.MC_props.cache_only:
+            
+            # This: -------------------
+            cloth.ob.update_from_editmode()
             cloth.ob.data.shape_keys.key_blocks['MC_current'].data.foreach_get('co', cloth.co.ravel())
-            cloth.selected[:] = False
+            # or:
+            #cloth.co = np.array([v.co for v in cloth.obm.verts], dtype=np.float32)
+            # -------------------------
+
+            cloth.selected[:] = False            
             if bpy.context.scene.MC_props.pause_selected:
                 cloth.ob.data.vertices.foreach_get('select', cloth.selected)
 
-        if False: # detects all modal operators. Not very useful
-            M = False
-            for w in bpy.context.window_manager.windows:
-                screen = w.screen
-                for a in screen.areas:
-                    if a.type == "VIEW_3D":
-                        M = MODAL(w)# = bpy.data.texts['detect_modal.py'].as_module()
-                        #print(MODAL.m)
-            #print(M , '=========')
-            if M:
-                spring_basic(cloth)
-                for i in range(cloth.co.shape[0]):
-                    cloth.obm.verts[i].co = cloth.co[i]
 
         """ =============== FORCES EDIT MODE ================ """
         # FORCES FORCES FORCES FORCES FORCES
@@ -3284,10 +3423,6 @@ def cloth_physics(ob, cloth, colliders):
 
         if cloth.ob.MC_props.detect_collisions:
             collide(cloth, colliders)
-
-        if False:
-            if cloth.pbm:
-                cloth.pb.test(cloth)
 
         # FORCES FORCES FORCES FORCES FORCES
         """ =============== FORCES EDIT MODE ================ """
@@ -4245,7 +4380,7 @@ class McPropsObject(bpy.types.PropertyGroup):
     bpy.props.FloatProperty(name="Self Collision Velocity Damping", description="Self self collisions reduces velocity", default=1, precision=3)
 
     sc_friction:\
-    bpy.props.FloatProperty(name="Self Collision Friction", description="Self self collisions friction", default=0.0, precision=3)
+    bpy.props.FloatProperty(name="Self Collision Friction", description="Self self collisions friction", default=0.0, soft_min=0, soft_max=1, precision=3)
 
     sc_box_max:\
     bpy.props.IntProperty(name="SC Box Max", description="Max number of sets in an octree box", default=150, min=10)
@@ -4514,7 +4649,7 @@ def refresh(cloth):
     cloth.velocity = Nx3(ob)
     np.copyto(cloth.pin_arr, cloth.co)
     cloth.geometry = get_mesh_counts(ob, cloth.obm)
-    # cloth.sew_springs = get_sew_springs() # build
+    cloth.sew_springs = get_sew_springs(cloth) # build
     cloth.obm.verts.ensure_lookup_table()
     cloth.co = get_co_edit(ob)
     cloth.wco = np.copy(cloth.co)
