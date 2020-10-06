@@ -39,6 +39,21 @@ def edge_edge_intersect_2d(a1,a2, b1,b2, intersect=False):
     else:
         return b1 + db * scale
 
+def edges_edges_intersect_2d(a1,a2, b1,b2, intersect=False):
+    '''simple 2d line intersect'''    
+    da = a2-a1
+    db = b2-b1
+    dp = a1-b1
+    dap = da[:, ::-1] * np.array([1,-1])    
+    denom = np.einsum('ij,ij->i', dap, db)    
+    num = np.einsum('ij,ij->i', dap, dp)
+    scale = (num / denom)
+    if intersect:
+        return b1 + db * scale[:, None], (scale > 0) & (scale < 1)
+    else:
+        return b1 + db * scale[:, None]
+    
+    
 def edge_edges_intersect_2d(edges1, edges2, vec1, vec2):
     '''Vector intersecting multiple edges in 2d
     requires N x 2 sets of edges and xy for vec1 and vec2.
