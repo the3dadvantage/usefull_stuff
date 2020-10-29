@@ -6,6 +6,35 @@ import bpy
 import numpy as np
 
 
+#----------------------------------------------
+def spread_array(ar=None, steps=6):
+    """Create interpolated points
+    between points in an array
+    of vectors."""
+    v = ar[1:] - ar[:-1]
+    div = v / (steps + 1)
+    new_ar = np.zeros((ar.shape[0] * (steps + 1), 2))
+    new_ar[::steps + 1] = ar
+    for i in range(steps):
+        ph = ar[:-1] + (div * (i + 1))
+        new_ar[:-(steps +1)][i+1::steps+1] = ph
+    
+    return new_ar[: -steps]
+
+xy = np.arange(4)
+ar = np.arange(8)
+ar.shape = (4,2)
+ar[:,0] = xy
+ar[:,1] = xy
+
+new_ar = spread_array(ar)
+
+print('------ new ------')
+print(new_ar)
+#----------------------------------------------
+
+
+
 def get_proxy_co(ob, co=None, proxy=None):
     """Gets co with modifiers like cloth"""
     if proxy is None:
