@@ -13,7 +13,10 @@ def spread_array(ar=None, steps=6):
     of vectors."""
     v = ar[1:] - ar[:-1]
     div = v / (steps + 1)
-    new_ar = np.zeros((ar.shape[0] * (steps + 1), 2))
+    if len(ar.shape) == 1:    
+        new_ar = np.zeros(ar.shape[0] * (steps + 1))
+    else:    
+        new_ar = np.zeros((ar.shape[0] * (steps + 1), ar.shape[1]))
     new_ar[::steps + 1] = ar
     for i in range(steps):
         ph = ar[:-1] + (div * (i + 1))
