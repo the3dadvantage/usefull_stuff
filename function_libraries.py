@@ -6,6 +6,20 @@ import bpy
 import numpy as np
 
 
+def map_ranges(r1b, r1t, r2b, r2t, val):
+    """Find the value of range 1 where
+    it maps to range two.
+    r1b: range 1 bottom
+    r1t: range 1 top"""
+
+    dif1 = r1t - r1b
+    dif2 = r2t - r2b
+    vd = val - r1b
+    dv1 = vd / dif1
+    
+    return dif2 * dv1 + r2b
+
+
 #----------------------------------------------
 def spread_array(ar=None, steps=6):
     """Create interpolated points
