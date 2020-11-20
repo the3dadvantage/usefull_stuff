@@ -126,7 +126,7 @@ def inside_triangles(tris, points, margin=0.0):#, cross_vecs):
 
     w = 1 - (u+v)
     # !!!! needs some thought
-    margin = -.2
+    #margin = 0.0
     # !!!! ==================
     weights = np.array([w, u, v]).T
     check = (u > margin) & (v > margin) & (w > margin)
@@ -405,7 +405,7 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
     sc.eymax = np.max(ey, axis=1) + margin
     sc.ezmax = np.max(ez, axis=1) + margin
         
-    timer(time.time()-T, "self col 5")
+    #timer(time.time()-T, "self col 5")
     # !!! can do something like check the octree to make sure the boxes are smaller
     #       to know if we hit a weird case where we're no longer getting fewer in boxes
     
@@ -426,8 +426,8 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
             #       we divide. So divide the left and right for example then get the new bounds for
             #       each side and so on...
     
-    timer(time.time()-T, 'sort boxes')
-    T = time.time()
+    #timer(time.time()-T, 'sort boxes')
+    #T = time.time()
     
     limit = 3
     count = 0
@@ -441,7 +441,7 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
             break
         count += 1    
 
-    timer(time.time()-T, 'b2')    
+    #timer(time.time()-T, 'b2')    
     #if sc.report:
     if 0:
         print(len(sc.big_boxes), "how many big boxes")
@@ -487,7 +487,7 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
         in_z2 = tzmax[rt] > sc.ezmin[re]
         rt, re = rt[in_z2], re[in_z2]
                                     
-        timer(time.time()-T, 'edge bounds')
+        #timer(time.time()-T, 'edge bounds')
         
         T = time.time()
         
@@ -495,378 +495,180 @@ def self_collisions_7(sc, margin=0.1, cloth=None):
             
             sc.ees += re.tolist()
             sc.trs += rt.tolist()
-    
 
-# ^^
-def ray_check_(sc, ed, trs, cloth):
+def ray_check_obj(sc, ed, trs, cloth):
     
-    e = sc.edges[ed] 
+    
+    # ed is a list object so we convert it for indexing the points
+    # trs indexes the tris
+    edidx = np.array(ed, dtype=np.int32)
+    
+    # e is the start co and current co of the cloth paird in Nx2x3    
+    e = sc.edges[ed]
+
     t = sc.tris[trs]
+    
+    start_co = e[:, 0]
+    co = e[:, 1]
+    
+    ori = t[:, 3]
+    t1 = t[:, 4] - ori
+    t2 = t[:, 5] - ori
+    
+    norms = np.cross(t1, t2)
+    un = norms / np.sqrt(np.einsum('ij,ij->i', norms, norms))[:, None]
+    
+    vecs = co - ori
+    dots = np.einsum('ij,ij->i', vecs, un)
+    
+    switch = dots < 0
+    
+    check, weights = inside_triangles(t[:, :3][switch], co[switch], margin= -sc.M)
+    start_check, start_weights = inside_triangles(t[:, :3][switch], start_co[switch], margin= -sc.M)
+    travel = un[switch][check] * -dots[switch][check][:, None]
+
+    weight_plot = t[:, 3:][switch][check] * start_weights[check][:, :, None]
+
+    loc = np.sum(weight_plot, axis=1)
+    
+    pcols = edidx[switch][check]
+    cco = sc.fco[pcols]
+    pl_move = loc - cco
+
+    fr = cloth.ob.MC_props.sc_friction
+    move = (travel * (1 - fr)) + (pl_move * fr)
+    #rev = revert_rotation(cloth.ob, move)
+    cloth.co[pcols] += move * .5
+
+
+def ray_check_oc(sc, ed, trs, cloth):
+    
+    eidx = np.array(ed, dtype=np.int32)
+    tidx = np.array(trs, dtype=np.int32)
+
+    e = sc.edges[eidx]
+    t = sc.tris[tidx]
+
+    start_co = e[:, 0]
+    co = e[:, 1]
+
+    M = cloth.ob.MC_props.self_collide_margin
+
+    start_ori = t[:, 0]
+    st1 = t[:, 1] - start_ori
+    st2 = t[:, 2] - start_ori
+    start_norms = np.cross(st1, st2)
+    u_start_norms = start_norms / np.sqrt(np.einsum('ij,ij->i', start_norms, start_norms))[:, None]
+    start_vecs = start_co - start_ori
+    start_dots = np.einsum('ij,ij->i', start_vecs, u_start_norms)
+    
+    
+    # normals from cloth.co (not from select_start)
+    ori = t[:, 3]
+    t1 = t[:, 4] - ori
+    t2 = t[:, 5] - ori
+    norms = np.cross(t1, t2)
+    un = norms / np.sqrt(np.einsum('ij,ij->i', norms, norms))[:, None]
+
+    vecs = co - ori
+    dots = np.einsum('ij,ij->i', vecs, un)
+
+    switch = np.sign(dots * start_dots)
+    direction = np.sign(dots)
+    abs_dots = np.abs(dots)
+    
+    # !!! if a point has switched sides, direction has to be reversed !!!    
+    direction *= switch
+    in_margin = (abs_dots <= M) | (switch == -1)
+    
+    
+    
+
+    check, weights = inside_triangles(t[:, 3:][in_margin], co[in_margin], margin= -0.1)
+    start_check, start_weights = inside_triangles(t[:, :3][in_margin][check], start_co[in_margin][check], margin= 0.0)
+
+    weight_plot = t[:, 3:][in_margin][check] * start_weights[:, :, None]
+    if False: # using start weight    
+        weight_plot = t[:, 3:][in_margin][check] * start_weights[:, :, None]
+    if False: # trying loc with start normals...    
+        loc = np.sum(weight_plot, axis=1) + ((un[in_margin][check] * M) * direction[in_margin][check][:, None])
+    loc = np.sum(weight_plot, axis=1) + ((u_start_norms[in_margin][check] * M) * direction[in_margin][check][:, None])
+    
+    co_idx = eidx[in_margin][check]
+
+    if False: # start norms (seems to make no difference...)   
+        travel = -(un[in_margin][check] * dots[in_margin][check][:, None]) + ((un[in_margin][check] * M) * direction[in_margin][check][:, None])
+    travel = -(u_start_norms[in_margin][check] * dots[in_margin][check][:, None]) + ((u_start_norms[in_margin][check] * M) * direction[in_margin][check][:, None])
+    #start_check, start_weights = inside_triangles(t[:, :3][in_margin][check], co[in_margin][check], margin= -0.1)
+    #move = cloth.co[co_idx] - start_co_loc
+    
+    #now in theory I can use the weights from start tris 
+
+    
+    if False: # moving tris away
+
+        travel *= 0.5
+        tridex = cloth.tridex[tidx[in_margin][check]]
+        cloth.co[tridex] -= travel[:, None]
+    
+    fr = cloth.ob.MC_props.sc_friction
+    if fr == 0:
         
-    #tv = [[v for v in sc.ob.data.polygons[t].vertices] for t in trs]
     
-    ori1 = t[:, 0]
-    ori2 = t[:, 3]
+        cloth.co[co_idx] += travel
+        print('zero friction')
+        return
     
-    t1a = t[:, 1] - ori1
-    t2a = t[:, 2] - ori1
-    norms_a = np.cross(t1a, t2a)
-    una = norms_a / np.sqrt(np.einsum('ij,ij->i', norms_a, norms_a))[:, None]
+    # could try managing the velocity instead of all this 
+    # add.at crap for the friction... So like reduce the vel when self collide
+    # happens. 
     
-    t1b = t[:, 4] - ori2
-    t2b = t[:, 5] - ori2
-    norms_b = np.cross(t1b, t2b)    
-    unb = norms_b / np.sqrt(np.einsum('ij,ij->i', norms_b, norms_b))[:, None]    
-    # now compare norms
-    
-    v1 = e[:, 0] - ori1 # could I pull this from the end instead of recalculating
-    v2 = e[:, 1] - ori2
-    
-    d1 = np.einsum('ij,ij->i', v1, una)
-    d2 = np.einsum('ij,ij->i', v2, unb)
         
-    switch = (d1 * d2) < 0
-    
-    in_m = np.abs(d2) < sc.M
-    
-    col = in_m + switch
-    #col = switch
-    
-    pos_neg = np.sign(d1)
+    pl_move = loc - cloth.co[co_idx]
     
     
-#    the point starts out on one side.
-#    It has to move either in the direction
-#    of the normal or the opposite direction
-#    if it starts on the positive side and its
-#    in the margin: it needs to stay on the positive side.
+    uni = np.unique(co_idx, return_counts=True, return_inverse=True)
+    div = uni[2][uni[1]]
+    div[div > 1] *= 2
+    #pl_move /= div[:, None]
     
-    
-    #move = d2 * pos_neg # * 1.1
-    #col = move < sc.M
-    #col = switch
-    
-    #print(sum(move < sc.M), 'move < sc.M')
-    #print(sum(col), 'in_m + switch')
-    
-    if np.any(col):
-        idx = np.array(ed)[col]
-#        
-#        I need to check if points need to move
-#        if they are in the margin they need to move
-#        they are in the margin if the dot of the vec
-#        with the unorm is less than the margin. 
-#        the direction they move will be determined
-#        by what side of the face they were on at start
-#        so collision = in the margin
-#        direction = what side at start.
+    if False: # moving tris away
 
+        move *= 0.5
+        tridex = cloth.tridex[tidx[in_margin][check]]
+        cloth.co[tridex] -= move[:, None]
+    
+    f_zeros = np.zeros((uni[0].shape[0], 3), dtype=np.float32)
+    zeros = np.zeros((uni[0].shape[0], 3), dtype=np.float32)
+    
+    np.add.at(f_zeros, uni[1], pl_move/div[:, None])
+    np.add.at(zeros, uni[1], travel/div[:, None])
 
     
-        friction = cloth.ob.MC_props.sc_friction
-        if friction > 0:
-            check, weights = inside_triangles(t[:, :3][col], cloth.select_start[idx], margin= -sc.M)
-
-            check2, weights2 = inside_triangles(t[:, 3:][col], cloth.select_start[idx], margin= -sc.M)
-
-            #check = check2
-
-            
-
-
-            plot = t[:, 3:][col] * weights[:, :, None]
-            plot2 = t[:, 3:][col] * weights2[:, :, None]
-            su1 = np.sum(plot[check], axis=1) * friction
-            su2 = np.sum(plot2[check], axis=1) * (1 - friction)
-            #check = check | check2
-
-            su = su1 + su2
-
-        else:
-            check, weights = inside_triangles(t[:, 3:][col], cloth.select_start[idx], margin= -sc.M)
-            plot = t[:, 3:][col] * weights[:, :, None]
-            su = np.sum(plot[check], axis=1)# * friction
-
-        test = 0
-        if test:
-            suu = su #+ surf
-
-            surf = unb[col][check] * sc.M * pos_neg[col][check][:, None]
-            cloth.co[idx[check]] = suu + surf
-            return
-        
-        #print(cloth.co.shape, "cloth.co shape")
-        idx_check = idx[check]
-        #print(check.shape, "check shape")
-        #print(idx.shape, "idx shape")
-        #print(idx_check.shape, "idx check shape")
-        #idx_check = idx#[check]
-        co_pre = cloth.co[idx_check]
-        vec = su - co_pre
-        
-        surf = unb[col][check] * sc.M * pos_neg[col][check][:, None]
-
-        uni, inv, counts = np.unique(idx_check, return_inverse=True, return_counts=True)
-        
-        div = counts[inv][:, None]
-            
-        cv_ = True
-        if cv_:    
-            cv = vec# + surf
-            
-            move_l = np.sqrt(np.einsum('ij,ij->i', cv, cv))
-            stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32)
-            np.add.at(stretch_array, idx[check], move_l)
-
-            this = stretch_array[idx[check]] / counts[inv]
-            this2 = move_l / this
-            cv *= this2[:, None]
-            cv /= counts[inv][:, None]
-
-            cv += (surf / div)
-            cv *= sc.force
-
-        if not cv_:    
-            shift = ((vec + surf) / div) * sc.force
-            np.add.at(cloth.co, idx_check, shift)
-        else:
-            np.add.at(cloth.co, idx[check], cv)
-
-        co_post = cloth.co[idx_check]
-        dif = co_post - co_pre
-        damping = cloth.ob.MC_props.sc_vel_damping
-        cloth.velocity[idx_check] += dif
-        
-        # think about this....
-        # what should the cloth velocity do
-        #   when a self collision happens...
-        # We have existing velocity to consider
-        # We have the movement caused by sc to consider
-        
-        #cloth.velocity[idx_check] *= 0
-        cloth.velocity[idx_check] += dif * damping
-
-
-def ray_check(sc, ed, trs, cloth):
-    
-    e = sc.edges[ed] 
-    t = sc.tris[trs]
-        
-    #tv = [[v for v in sc.ob.data.polygons[t].vertices] for t in trs]
-    
-    ori1 = t[:, 0]
-    ori2 = t[:, 3]
-    
-    t1a = t[:, 1] - ori1
-    t2a = t[:, 2] - ori1
-    norms_a = np.cross(t1a, t2a)
-    una = norms_a / np.sqrt(np.einsum('ij,ij->i', norms_a, norms_a))[:, None]
-
-    t1b = t[:, 4] - ori2
-    t2b = t[:, 5] - ori2
-    norms_b = np.cross(t1b, t2b)    
-    unb = norms_b / np.sqrt(np.einsum('ij,ij->i', norms_b, norms_b))[:, None]    
-    # now compare norms
-    
-    v1 = e[:, 0] - ori1 # could I pull this from the end instead of recalculating?
-    v2 = e[:, 1] - ori2
-    
-    d1 = np.einsum('ij,ij->i', v1, una)
-    d2 = np.einsum('ij,ij->i', v2, unb)
-    
-    pos_neg = np.sign(d1)
-    
-
-    #switch = (d1 * d2) < 0
-    
-    #in_m = np.abs(d2) < sc.M
-    
-    #col = in_m + switch
-
-    
-    move = d2 * pos_neg # * 1.1
-    col = move < sc.M
-    
-    if np.any(col):
-        idx = np.array(ed)[col]
-        
-#        getting weights on first tri makes it behave
-#        like friction. Second tri no friction.
-#        For some reason points are sliding when I move
-#        to plot instead of making a vec and going towards plot
-#        Cant figure out the difference Needs thought...
-        friction = cloth.ob.MC_props.sc_friction
-        if friction > 0:
-            check, weights = inside_triangles(t[:, :3][col], cloth.select_start[idx], margin= -sc.M)
-
-            check2, weights2 = inside_triangles(t[:, 3:][col], cloth.select_start[idx], margin= -sc.M)
-
-            #check = check2
-            
-
-
-            plot = t[:, 3:][col] * weights[:, :, None]
-            plot2 = t[:, 3:][col] * weights2[:, :, None]
-            su1 = np.sum(plot[check], axis=1) * friction
-            su2 = np.sum(plot2[check], axis=1) * (1 - friction)
-            #check = check | check2
-
-            su = su1 + su2
-
-        else:
-            check, weights = inside_triangles(t[:, 3:][col], cloth.select_start[idx], margin= -sc.M)
-            plot = t[:, 3:][col] * weights[:, :, None]
-            su = np.sum(plot[check], axis=1)# * friction
-
-        test = False
-        if test:
-            suu = su #+ surf
-            cloth.co[idx[check]] = suu    
-            return
-        
-        idx_check = idx[check]
-        co_pre = cloth.co[idx_check]
-        vec = su - co_pre
-        surf = unb[col][check] * sc.M * pos_neg[col][check][:, None]
-
-        uni, inv, counts = np.unique(idx_check, return_inverse=True, return_counts=True)
-        
-        div = counts[inv][:, None]
-            
-        cv_ = True
-        if cv_:    
-            cv = vec# + surf
-            
-            move_l = np.sqrt(np.einsum('ij,ij->i', cv, cv))
-            stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32)
-            np.add.at(stretch_array, idx[check], move_l)
-
-            this = stretch_array[idx[check]] / counts[inv]
-            this2 = move_l / this
-            cv *= this2[:, None]
-            cv /= counts[inv][:, None]
-
-            cv += (surf / div)
-            cv *= sc.force
-
-        if not cv_:    
-            shift = ((vec + surf) / div) * sc.force
-            np.add.at(cloth.co, idx_check, shift)
-        else:
-            np.add.at(cloth.co, idx[check], cv)
-
-        co_post = cloth.co[idx_check]
-        dif = co_post - co_pre
-        damping = cloth.ob.MC_props.sc_vel_damping
-        #cloth.velocity[idx_check] += (dif * 2)
-        
-        # think about this....
-        # what should the cloth velocity do
-        #   when a self collision happens...
-        # We have existing velocity to consider
-        # We have the movement caused by sc to consider
-        
-        cloth.velocity[idx_check] *= 0
-        cloth.velocity[idx_check] += dif * damping
-        
-
-def ray_check_1(sc, ed, trs, cloth):
-    
-    e = sc.edges[ed] 
-    t = sc.tris[trs]
-        
-    #tv = [[v for v in sc.ob.data.polygons[t].vertices] for t in trs]
-    
-    ori1 = t[:, 0]
-    ori2 = t[:, 3]
-    
-    t1a = t[:, 1] - ori1
-    t2a = t[:, 2] - ori1
-    norms_a = np.cross(t1a, t2a)
-    una = norms_a / np.sqrt(np.einsum('ij,ij->i', norms_a, norms_a))[:, None]
-    
-
-    t1b = t[:, 4] - ori2
-    t2b = t[:, 5] - ori2
-    norms_b = np.cross(t1b, t2b)    
-    unb = norms_b / np.sqrt(np.einsum('ij,ij->i', norms_b, norms_b))[:, None]    
-    # now compar norms
-    
-    v1 = e[:, 0] - ori1 # could I pull this from the end instead of recalculating
-    v2 = e[:, 1] - ori2
-    
-    d1 = np.einsum('ij,ij->i', v1, una)
-    d2 = np.einsum('ij,ij->i', v2, unb)
-    
-    pos_neg = np.sign(d1)
+    move = (zeros * (1 - fr)) + (f_zeros * fr)
+    #move = (travel * (1 - fr)) + (pl_move * fr)
     
     
-    move = d2 * pos_neg # * 1.1
-    col = move < sc.M
+
+    cloth.co[uni[0]] += move
+
+
+
+
+    #cloth.velocity[co_idx] *= 0
+    #cloth.velocity[tridex] *= 0
     
-    if np.any(col):
-        idx = np.array(ed)[col]
-        
-#        getting weights on first tri makes it behave
-#        like friction. Second tri no friction.
-#        For some reason points are sliding when I move
-#        to plot instead of making a vec and going towards plot
-#        Cant figure out the difference Needs thought...
+    #move = (un[in_margin][check] * dots[in_margin][check][:, None]) + (un[in_margin][check] * M) * direction[in_margin][check][:, None]
+    
+    #move = (un[in_margin][check] * M) * direction[in_margin][check][:, None]
+    #cloth.co[co_idx] -= move
+    
+    #print(co_idx)
+    #cloth.co[co_idx] += un[in_margin][check]
+    
 
-        friction = True
-        if friction:    
-            check_b, weights_b = inside_triangles(t[:, :3][col], cloth.select_start[idx], margin= -sc.M)
-            check, weights = inside_triangles(t[:, 3:][col], cloth.select_start[idx], margin= -sc.M)
-            check = check | check_b
 
-        else:
-            check, weights = inside_triangles(t[:, 3:][col], cloth.select_start[idx], margin= -sc.M)
 
-        plot = t[:, 3:][col] * weights[:, :, None]
-        su = np.sum(plot[check], axis=1)
-
-        test = False
-        if test:
-            suu = su + surf
-            cloth.co[idx[check]] = suu    
-            return
-        
-        idx_check = idx[check]
-        co_pre = cloth.co[idx_check]
-        vec = su - co_pre
-        surf = unb[col][check] * sc.M * pos_neg[col][check][:, None]
-
-        uni, inv, counts = np.unique(idx_check, return_inverse=True, return_counts=True)
-        
-        div = counts[inv][:, None]
-            
-        cv_ = True
-        if cv_:    
-            cv = vec# + surf
-            
-            move_l = np.sqrt(np.einsum('ij,ij->i', cv, cv))
-            stretch_array = np.zeros(cloth.co.shape[0], dtype=np.float32)
-            np.add.at(stretch_array, idx[check], move_l)
-
-            this = stretch_array[idx[check]] / counts[inv]
-            this2 = move_l / this
-            cv *= this2[:, None]
-            cv /= counts[inv][:, None]
-
-            cv += (surf / div)
-            cv *= sc.force
-
-        if not cv_:    
-            shift = ((vec + surf) / div) * sc.force
-            np.add.at(cloth.co, idx_check, shift)
-        else:
-            np.add.at(cloth.co, idx[check], cv)
-
-        co_post = cloth.co[idx_check]
-        dif = co_post - co_pre
-        cloth.velocity[idx_check] += dif
-        damping = cloth.ob.MC_props.sc_vel_damping
-        cloth.velocity[idx_check] *= damping
 
 
 class SelfCollide():
@@ -877,13 +679,19 @@ class SelfCollide():
         # -----------------------
         ob = cloth.ob
         tris_six = cloth.tris_six
+
         tridex = cloth.tridex
         
         cloth.sc_co[:cloth.v_count] = cloth.select_start
         cloth.sc_co[cloth.v_count:] = cloth.co
-
+        self.fco = cloth.co
+        
         tris_six[:, :3] = cloth.select_start[cloth.tridex]
         tris_six[:, 3:] = cloth.co[cloth.tridex]
+        
+        M = cloth.ob.MC_props.self_collide_margin
+        cloth.surface_offset_tris[:, 0] = (cloth.co - (cloth.sc_normals * M))[cloth.tridex]
+        cloth.surface_offset_tris[:, 1] = (cloth.co + (cloth.sc_normals * M))[cloth.tridex]
         # -----------------------
         
         self.has_col = False
@@ -931,7 +739,7 @@ def detect_collisions(cloth):
 
     self_collisions_7(sc, sc.M, cloth)
 
-    ray_check(sc, sc.ees, sc.trs, cloth)
+    ray_check_oc(sc, sc.ees, sc.trs, cloth)
         
     if sc.report:
         print(sc.box_max, "box max")
