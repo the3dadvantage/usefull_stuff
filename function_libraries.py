@@ -128,17 +128,32 @@ def bmesh_proxy(ob):
     return obm
 
 
-def select_edit_mode(ob, verts, obm=None):
+def select_edit_mode(sc, ob, idx, type='v', deselect=False, obm=None):
     """Selects verts in edit mode and updates"""
+    
     if ob.data.is_editmode:
         if obm is None:
             obm = bmesh.from_edit_mesh(ob.data)
             obm.verts.ensure_lookup_table()
-        for v in np.hstack(verts):
-            if v is not None:
-                obm.verts[v].select = True
+        
+        if type == 'v':
+            x = obm.verts
+        if type == 'f':
+            x = obm.faces
+        if type == 'e':
+            x = obm.edges
+        
+        if deselect:
+            for i in x:
+                i.select = False
+        
+        for i in idx:
+            sc.select_counter[i] += 1
+            x[i].select = True
+        
         if obm is None:
-            bmesh.update_edit_mesh(ob.data)        
+            bmesh.update_edit_mesh(ob.data)
+        #bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
 
 
 # ---------------------four functions below------------------------------- <<
