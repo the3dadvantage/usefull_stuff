@@ -308,6 +308,67 @@ def merge_verts(ob, margin=0.001, obm=None):
     obm.free()
 
 
+def get_ordered_loop(poly_line, edges=None):
+    """Takes a bunch of verts and gives the order
+    based on connected edges.
+    Or, takes an edge array of vertex indices
+    and gives the vertex order."""
+
+    if edges is not None:        
+        v = edges[0][0]
+        le = edges[np.any(v == edges, axis=1)]
+        if len(le) != 2:
+            print("requires a continuous loop of edges")
+            return
+            
+        ordered = [v]
+        for i in range(len(poly_line.data.vertices)):
+            #le = v.link_edges
+            le = edges[np.any(v == edges, axis=1)]
+            if len(le) != 2:
+                print("requires a continuous loop of edges")
+                break
+
+            ot1 = le[0][le[0] != v]
+            ot2 = le[1][le[1] != v]
+            v = ot1
+            if ot1 in ordered[-2:]:    
+                v = ot2
+            if v == ordered[0]:
+                break
+
+            ordered += [v[0]]
+        return ordered
+        
+    obm = get_bmesh(poly_line, refresh=True)
+    v = obm.edges[0].verts[0]
+    le = v.link_edges
+
+    if len(le) != 2:
+        print("requires a continuous loop of edges")
+        return
+        
+    ordered = [v.index]
+    for i in range(len(poly_line.data.vertices)):
+        le = v.link_edges
+
+        if len(le) != 2:
+            print("requires a continuous loop of edges")
+            break
+
+        ot1 = le[0].other_vert(v)
+        ot2 = le[1].other_vert(v)
+        v = ot1
+        if ot1.index in ordered[-2:]:    
+            v = ot2
+        if v.index == ordered[0]:
+            break
+
+        ordered += [v.index]
+    
+    return ordered    
+    
+
 def read_python_script(name=None):
     import bpy
     import inspect
