@@ -6,6 +6,30 @@ import bpy
 import numpy as np
 
 
+def get_linked(obm, idx, op=None):
+    """put in the index of a vert. Get everything
+    linked just like 'select_linked_pick()'"""
+    vboos = np.zeros(len(obm.verts), dtype=np.bool)
+    cvs = [obm.verts[idx]]
+    escape = False
+    while not escape:
+        new = []
+        for v in cvs:
+            if not vboos[v.index]:
+                vboos[v.index] = True
+                lv = [e.other_vert(v) for e in v.link_edges]
+                culled = [v for v in lv if not vboos[v.index]]
+                new += culled
+        cvs = new
+        if len(cvs) == 0:
+            escape = True
+    idxer = np.arange(len(obm.verts))[vboos]
+    if op == "DELETE":    
+        verts = [obm.verts[i] for i in idxer]
+        bmesh.ops.delete(obm, geom=verts)    
+    return idxer
+
+
 def map_ranges(r1b, r1t, r2b, r2t, val):
     """Find the value of range 1 where
     it maps to range two.
