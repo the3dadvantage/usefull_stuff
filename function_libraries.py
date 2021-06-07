@@ -760,7 +760,7 @@ def dots(a,b):
     #N x 3 - N x 3
     x = np.einsum('ij,ij->i', a, b)
     #3 - N x 3
-    y = np.einsum('j,ij->i', a, b)
+    y = np.einsum('j,ij->i', a, b) # more simply b @ n
     #N x 3 - N x N x 3
     z = np.einsum('ij,ikj->ik', a, b)    
     #N x N x 3 - N x N x 3    
