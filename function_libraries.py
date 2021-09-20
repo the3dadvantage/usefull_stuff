@@ -6,6 +6,16 @@ import bpy
 import numpy as np
 
 
+def percent_solve(result, decimal):
+    """Find the value needed for
+    the end result given a percentage.
+    Example: if I want 100 and 20 percent
+    is going to be taken: solve(100, .2)."""
+    mult = 1 / decimal # 5 here
+    div = result / (mult - 1)
+    return div * mult
+
+
 def get_linked(obm, idx, op=None):
     """put in the index of a vert. Get everything
     linked just like 'select_linked_pick()'"""
