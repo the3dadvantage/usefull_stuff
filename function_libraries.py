@@ -5,6 +5,10 @@
 import bpy
 import numpy as np
 
+# for using pip in python:
+from pip._internal import main as pipmain
+pipmain(['install', 'package-name'])
+
 
 def percent_solve(result, decimal):
     """Find the value needed for
