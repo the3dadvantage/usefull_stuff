@@ -10,6 +10,55 @@ from pip._internal import main as pipmain
 pipmain(['install', 'package-name'])
 
 
+class Bezier():
+    def TwoPoints(t, P1, P2):
+        """
+        Returns a point between P1 and P2, parametised by t.
+        """
+
+        Q1 = (1 - t) * P1 + t * P2
+        return Q1
+
+    def Points(t, points):
+        """
+        Returns a list of points interpolated by the Bezier process
+        """
+        newpoints = []
+        for i1 in range(0, len(points) - 1):
+        #for i1 in range(0, len(points)):
+            newpoints += [Bezier.TwoPoints(t, points[i1], points[i1 + 1])]
+        return newpoints
+
+    def Point(t, points):
+        """
+        Returns a point interpolated by the Bezier process
+        """
+        newpoints = points
+        while len(newpoints) > 1:
+            newpoints = Bezier.Points(t, newpoints)
+        return newpoints[0]
+
+    def Curve(t_values, points):
+        """
+        Returns a point interpolated by the Bezier process
+        """
+
+        curve = np.array([[0.0] * len(points[0])])
+        for t in t_values:
+            curve = np.append(curve, [Bezier.Point(t, points)], axis=0)
+
+        curve = np.delete(curve, 0, 0)
+
+        return curve
+    
+    # example
+    bez_test = False
+    if bez_test:
+        t_points = np.arange(0, 2, 0.1)
+        test = np.array([[0, 5], [4, 10], [8, 10]])#, [4, 0], [6, 0], [10, 5]]) # can be lots of points
+        test_set_1 = Bezier.Curve(t_points, test)
+
+
 def percent_solve(result, decimal):
     """Find the value needed for
     the end result given a percentage.
