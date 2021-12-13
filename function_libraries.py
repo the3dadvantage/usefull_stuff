@@ -10,6 +10,56 @@ from pip._internal import main as pipmain
 pipmain(['install', 'package-name'])
 
 
+def redistribute_polyline(co, spacing=None, respaced=None):
+    """Walk the points in a polygon
+    assuming they are not spaced
+    evenly and space them evenly.
+    If spacing is None use average len.
+    Respaced can be an array of distances
+    for spacing unevenly."""
+
+    vecs = co[1:] - co[:-1]
+    dots = np.einsum('ij,ij->i', vecs, vecs)
+
+    # cull zero length
+    booly = np.ones(co.shape[0], dtype=bool)
+    booly[1:] = dots > 0.0
+    co = co[booly]
+
+    vecs = co[1:] - co[:-1]
+    dots = np.einsum('ij,ij->i', vecs, vecs)
+
+    lengths = np.sqrt(dots)
+    u_vecs = vecs / lengths[:, None]
+    av_len = np.mean(lengths)
+    total_len = np.sum(lengths)
+
+    if spacing is None:
+        spacing = av_len
+
+    # get the number of points
+    point_count = int(total_len // spacing)
+    
+    if respaced is None:    
+        respaced = np.linspace(0.0, total_len, point_count)
+    
+    cumulated = np.cumsum(lengths)
+    with_zero = np.zeros(cumulated.shape[0] + 1, dtype=np.float32)
+    with_zero[1:] = cumulated
+    
+    idxer = np.arange(with_zero.shape[0])
+    hits = []
+    for i in range(respaced.shape[0] - 1):
+        hit = respaced[i] >= with_zero
+        idx = idxer[hit][-1]
+        
+        dif = respaced[i] - with_zero[idx]
+        crawl = co[idx] + (u_vecs[idx] * dif)
+        hits.append(crawl)
+                
+    return hits + [co[-1]]
+
+
 class Bezier():
     def TwoPoints(t, P1, P2):
         """
