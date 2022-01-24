@@ -10,6 +10,28 @@ from pip._internal import main as pipmain
 pipmain(['install', 'package-name'])
 
 
+def make_2d_object(xy, name, offset=0.0):
+    """Takes the 2d coords and adds the z as 0.0
+    then makes new object or replaces data if the
+    object with that name exists."""
+    import bpy
+    xyz = np.zeros((len(xy), 3), dtype=np.float32)
+    xyz[:, :2] = xy
+    edges = np.empty((xyz.shape[0] - 1, 2), dtype=np.int32)
+    edges[:, 0] = np.arange(xyz.shape[0] - 1)
+    edges[:, 1] = np.arange(xyz.shape[0] - 1) + 1
+    edges = edges.tolist()
+    verts = xyz.tolist()
+    faces = []
+    
+    if name in bpy.data.objects:
+        ob = bpy.data.objects[name]
+        link_mesh(verts, edges, faces, name=name, ob=ob)
+        ob.location.x = offset
+    else:    
+        link_mesh(verts, edges, faces, name=name, offset=offset)    
+
+
 def add_empty(name, loc, rot, size=0.05, type="SPHERE"):
     """Create an empty and link it
     to the scene"""
