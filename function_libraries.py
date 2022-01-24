@@ -10,6 +10,23 @@ from pip._internal import main as pipmain
 pipmain(['install', 'package-name'])
 
 
+def add_empty(name, loc, rot, size=0.05, type="SPHERE"):
+    """Create an empty and link it
+    to the scene"""
+    if name in bpy.data.objects:
+        o = bpy.data.objects[name]
+    else:    
+        o = bpy.data.objects.new(name, None)
+        bpy.context.scene.collection.objects.link(o)
+
+        # empty_draw was replaced by empty_display
+    o.empty_display_size = size
+    o.empty_display_type = type
+
+    o.location.xy = loc
+    o.rotation_euler[2] = rot
+
+
 def redistribute_polyline(co, spacing=None, respaced=None):
     """Walk the points in a polygon
     assuming they are not spaced
