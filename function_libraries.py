@@ -920,6 +920,9 @@ def dots(a,b):
     #N x 2 x 3 - N x 2 x 3
     a = np.einsum('ijk,ijk->ij', a, b)    
     
+    #N x N x 3 - 3 x 3
+    z = np.einsum('ikj,ij->ik', ori_vecs, ori)
+    
     #N x 2 x 3 - N x 3
     np.einsum('ij, ikj->ik', axis_vecs, po_vecs)
     
