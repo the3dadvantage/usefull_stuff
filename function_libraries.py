@@ -848,6 +848,13 @@ def create_debug_mesh(numpy_coords=[np.array([[1,2,3]]), np.array([[4,5,6]])],
 
 
 def offset_face_indices(faces=[]):
+    
+    # this is probably better: (the bool is the verts you are keeping)
+    #vidx_offset = np.cumsum(~data['vert_bool'])
+    #verts = co[data['vert_bool']]
+    #lens_polys = np.arange(len(ob.data.polygons))[data['face_bool']]
+    #faces  = [[p - vidx_offset[p] for p in ob.data.polygons[f].vertices] for f in lens_polys]
+    
     """Sorts the original face vert indices
     for a new mesh from subset."""
     # Example: face[n].verts = [[20, 10, 30], [10, 30, 100]]
